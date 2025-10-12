@@ -4,8 +4,8 @@ import express from 'express';
 import axios from 'axios';
 import { google } from 'googleapis';
 import ShortUniqueId from 'short-unique-id';
-import { extractTextFromPDF } from './components/pdf_reader.js'
-import { askGemini } from './components/gemini.js'
+import { extractTextFromPDF } from './pdf_reader.js'
+import { askGemini } from './gemini.js'
 // import { parseIntentBasedQA } from "./components/IntentQA.js"
 
 const app = express();
