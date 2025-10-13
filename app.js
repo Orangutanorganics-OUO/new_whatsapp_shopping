@@ -244,7 +244,7 @@ async function sendWhatsAppInteractiveMessage(to, body, buttons) {
 
   return axios({
     method: 'POST',
-    url: `https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`,
+    url: `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${ACCESS_TOKEN}`,
@@ -294,7 +294,7 @@ if (!PAYMENT_CONFIGURATION_NAME) {
   console.warn('Warning: PAYMENT_CONFIGURATION_NAME not set. The order_details message requires the exact payment configuration name from Meta.');
 }
 
-const GRAPH_URL = `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages`;
+const GRAPH_URL = `https://graph.facebook.com/v22.0/${PHONE_NUMBER_ID}/messages`;
 
 // --- STATE STORE ---
 const orderSessions = {};        // orderId => session
