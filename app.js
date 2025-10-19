@@ -9,7 +9,7 @@ import { askGemini } from './gemini.js'
 
 import {helmet} from 'helmet';
 import {morgan} from 'morgan';
-import {bodyParser} from 'body-parser';
+// import {bodyParser} from 'body-parser';
 // import { parseIntentBasedQA } from "./components/IntentQA.js"
 
 
@@ -22,8 +22,8 @@ const app = express();
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf } }));
 app.use(helmet()); // Security headers
 app.use(morgan('combined')); // Logging
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+// app.use(bodyParser.json());
+// app.use(bodyParser.urlencoded({ extended: true }));
 
 
 app.get('/health', (req, res) => {
