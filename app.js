@@ -11,8 +11,7 @@ import cors from 'cors';
 
 import helmet from 'helmet';
 import morgan from 'morgan';
-// import {bodyParser} from 'body-parser';
-// import { parseIntentBasedQA } from "./components/IntentQA.js"
+import bodyParser from 'body-parser';
 
 
 import delhiveryRoutes from './delhivery.js';
@@ -24,8 +23,8 @@ const app = express();
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf } }));
 app.use(helmet()); // Security headers
 app.use(morgan('combined')); // Logging
-// app.use(bodyParser.json());
-// app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 // CORS Configuration
 const corsOptions = {
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
