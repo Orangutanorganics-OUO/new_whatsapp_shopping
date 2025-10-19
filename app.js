@@ -13,9 +13,9 @@ import {morgan} from 'morgan';
 // import { parseIntentBasedQA } from "./components/IntentQA.js"
 
 
-import {delhiveryRoutes} from './delhivery.js';
-import {razorpayRoutes} from './/razorpay.js';
-import {checkoutRoutes} from './checkout.js';
+import delhiveryRoutes from './delhivery.js';
+import razorpayRoutes from './razorpay.js';
+import checkoutRoutes from './checkout.js';
 const app = express();
 
 // capture raw body for webhook signature verification if needed
