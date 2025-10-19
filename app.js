@@ -6,15 +6,16 @@ import { google } from 'googleapis';
 import ShortUniqueId from 'short-unique-id';
 import { extractTextFromPDF } from './pdf_reader.js'
 import { askGemini } from './gemini.js'
-const helmet = require('helmet');
-const morgan = require('morgan');
-const bodyParser = require('body-parser');
+
+import {helmet} from ('helmet');
+import {morgan} from ('morgan');
+import {bodyParser} from ('body-parser');
 // import { parseIntentBasedQA } from "./components/IntentQA.js"
 
 
-const delhiveryRoutes = require('./delhivery.js');
-const razorpayRoutes = require('.//razorpay.js');
-const checkoutRoutes = require('./checkout.js');
+import {delhiveryRoutes} from './delhivery.js';
+import {razorpayRoutes} from './/razorpay.js';
+import {checkoutRoutes} from './checkout.js';
 const app = express();
 
 // capture raw body for webhook signature verification if needed
