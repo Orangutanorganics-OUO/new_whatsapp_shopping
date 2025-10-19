@@ -6,12 +6,38 @@ import { google } from 'googleapis';
 import ShortUniqueId from 'short-unique-id';
 import { extractTextFromPDF } from './pdf_reader.js'
 import { askGemini } from './gemini.js'
+const helmet = require('helmet');
+const morgan = require('morgan');
+const bodyParser = require('body-parser');
 // import { parseIntentBasedQA } from "./components/IntentQA.js"
 
+
+const delhiveryRoutes = require('./delhivery.js');
+const razorpayRoutes = require('.//razorpay.js');
+const checkoutRoutes = require('./checkout.js');
 const app = express();
 
 // capture raw body for webhook signature verification if needed
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf } }));
+app.use(helmet()); // Security headers
+app.use(morgan('combined')); // Logging
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+
+
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'Orangutan Organics API Server is running',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// API Routes
+app.use('/api/delhivery', delhiveryRoutes);
+app.use('/api/razorpay', razorpayRoutes);
+app.use('/api/checkout', checkoutRoutes);
 
 
 
