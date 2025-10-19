@@ -1,7 +1,7 @@
-const express = require('express');
-const router = express.Router();
-const axios = require('axios');
+import express from 'express';
+import axios from 'axios';
 
+const router = express.Router();
 const GOOGLE_SHEETS_URL = process.env.GOOGLE_SHEETS_URL;
 
 /**
@@ -16,24 +16,22 @@ router.post('/save-order', async (req, res) => {
     if (!orderData.type || orderData.type !== 'checkout') {
       return res.status(400).json({
         success: false,
-        message: 'Invalid order data. Must include type: "checkout"'
+        message: 'Invalid order data. Must include type: "checkout"',
       });
     }
 
     if (!orderData.orderId) {
       return res.status(400).json({
         success: false,
-        message: 'Order ID is required'
+        message: 'Order ID is required',
       });
     }
 
     console.log('Saving order to Google Sheets:', orderData.orderId);
 
     // Send to Google Sheets
-    const response = await axios.post(GOOGLE_SHEETS_URL, orderData, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
+    await axios.post(GOOGLE_SHEETS_URL, orderData, {
+      headers: { 'Content-Type': 'application/json' },
     });
 
     console.log('Order saved successfully:', orderData.orderId);
@@ -41,16 +39,15 @@ router.post('/save-order', async (req, res) => {
     return res.json({
       success: true,
       message: 'Order saved successfully',
-      orderId: orderData.orderId
+      orderId: orderData.orderId,
     });
-
   } catch (error) {
     console.error('Error saving order to Google Sheets:', error.response?.data || error.message);
 
     return res.status(500).json({
       success: false,
       message: 'Failed to save order',
-      error: error.message
+      error: error.message,
     });
   }
 });
@@ -68,11 +65,7 @@ router.post('/process-cod', async (req, res) => {
     // Step 1: Create Delhivery shipment
     let delhiveryResponse = null;
     try {
-      const payload = {
-        shipments: [shipmentData],
-        pickup_location: pickupLocation
-      };
-
+      const payload = { shipments: [shipmentData], pickup_location: pickupLocation };
       const bodyStr = `format=json&data=${encodeURIComponent(JSON.stringify(payload))}`;
 
       const delhiveryRes = await axios.post(
@@ -80,10 +73,10 @@ router.post('/process-cod', async (req, res) => {
         bodyStr,
         {
           headers: {
-            'Accept': 'application/json',
-            'Authorization': `Token ${process.env.DELHIVERY_API_KEY}`,
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
+            Accept: 'application/json',
+            Authorization: `Token ${process.env.DELHIVERY_API_KEY}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
         }
       );
 
@@ -93,24 +86,23 @@ router.post('/process-cod', async (req, res) => {
       console.error('❌ Delhivery error (continuing):', delhiveryError.response?.data || delhiveryError.message);
       delhiveryResponse = {
         error: delhiveryError.message,
-        details: delhiveryError.response?.data
+        details: delhiveryError.response?.data,
       };
     }
 
     // Step 2: Save order to Google Sheets
     const orderDataWithDelhivery = {
       ...orderData,
-      delhiveryResponse: JSON.stringify(delhiveryResponse)
+      delhiveryResponse: JSON.stringify(delhiveryResponse),
     };
 
     try {
       await axios.post(GOOGLE_SHEETS_URL, orderDataWithDelhivery, {
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
       });
       console.log('✅ Order saved to Google Sheets');
     } catch (sheetError) {
       console.error('❌ Google Sheets error:', sheetError.message);
-      // Continue even if sheet save fails
     }
 
     // Return success
@@ -118,16 +110,15 @@ router.post('/process-cod', async (req, res) => {
       success: true,
       orderId: orderData.orderId,
       delhivery: delhiveryResponse,
-      message: 'COD order processed successfully'
+      message: 'COD order processed successfully',
     });
-
   } catch (error) {
     console.error('Error processing COD order:', error);
 
     return res.status(500).json({
       success: false,
       message: 'Failed to process COD order',
-      error: error.message
+      error: error.message,
     });
   }
 });
@@ -145,11 +136,7 @@ router.post('/process-prepaid', async (req, res) => {
     // Step 1: Create Delhivery shipment (after payment is verified)
     let delhiveryResponse = null;
     try {
-      const payload = {
-        shipments: [shipmentData],
-        pickup_location: pickupLocation
-      };
-
+      const payload = { shipments: [shipmentData], pickup_location: pickupLocation };
       const bodyStr = `format=json&data=${encodeURIComponent(JSON.stringify(payload))}`;
 
       const delhiveryRes = await axios.post(
@@ -157,10 +144,10 @@ router.post('/process-prepaid', async (req, res) => {
         bodyStr,
         {
           headers: {
-            'Accept': 'application/json',
-            'Authorization': `Token ${process.env.DELHIVERY_API_KEY}`,
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
+            Accept: 'application/json',
+            Authorization: `Token ${process.env.DELHIVERY_API_KEY}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
         }
       );
 
@@ -170,7 +157,7 @@ router.post('/process-prepaid', async (req, res) => {
       console.error('❌ Delhivery error (continuing):', delhiveryError.response?.data || delhiveryError.message);
       delhiveryResponse = {
         error: delhiveryError.message,
-        details: delhiveryError.response?.data
+        details: delhiveryError.response?.data,
       };
     }
 
@@ -178,17 +165,16 @@ router.post('/process-prepaid', async (req, res) => {
     const orderDataWithDetails = {
       ...orderData,
       paymentId: paymentDetails.payment_id,
-      delhiveryResponse: JSON.stringify(delhiveryResponse)
+      delhiveryResponse: JSON.stringify(delhiveryResponse),
     };
 
     try {
       await axios.post(GOOGLE_SHEETS_URL, orderDataWithDetails, {
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
       });
       console.log('✅ Prepaid order saved to Google Sheets');
     } catch (sheetError) {
       console.error('❌ Google Sheets error:', sheetError.message);
-      // Continue even if sheet save fails
     }
 
     // Return success
@@ -197,18 +183,17 @@ router.post('/process-prepaid', async (req, res) => {
       orderId: orderData.orderId,
       delhivery: delhiveryResponse,
       payment: paymentDetails,
-      message: 'Prepaid order processed successfully'
+      message: 'Prepaid order processed successfully',
     });
-
   } catch (error) {
     console.error('Error processing Prepaid order:', error);
 
     return res.status(500).json({
       success: false,
       message: 'Failed to process Prepaid order',
-      error: error.message
+      error: error.message,
     });
   }
 });
 
-module.exports = router;
+export default router;
