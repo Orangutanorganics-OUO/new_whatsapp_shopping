@@ -6,6 +6,8 @@ import { google } from 'googleapis';
 import ShortUniqueId from 'short-unique-id';
 import { extractTextFromPDF } from './pdf_reader.js'
 import { askGemini } from './gemini.js'
+// const cors = require('cors');
+import cors from 'cors';
 
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -24,6 +26,13 @@ app.use(helmet()); // Security headers
 app.use(morgan('combined')); // Logging
 // app.use(bodyParser.json());
 // app.use(bodyParser.urlencoded({ extended: true }));
+// CORS Configuration
+const corsOptions = {
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions));
 
 
 app.get('/health', (req, res) => {
