@@ -27,7 +27,7 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 // CORS Configuration
 const corsOptions = {
-  origin: 'http://localhost:3000',
+  origin: 'https://glittery-malabi-b62452.netlify.app',
   credentials: true,
   optionsSuccessStatus: 200
 };
