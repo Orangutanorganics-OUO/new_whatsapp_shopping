@@ -27,7 +27,7 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 // CORS Configuration
 const corsOptions = {
-  origin: 'https://glittery-malabi-b62452.netlify.app',
+  origin: 'https://orangutanorganics.com',
   credentials: true,
   optionsSuccessStatus: 200
 };
