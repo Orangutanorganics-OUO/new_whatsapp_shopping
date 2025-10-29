@@ -50,7 +50,6 @@ app.use('/api/checkout', checkoutRoutes);
 
 
 
-// --- ENV ---
 const {
   PORT = 3000,
   VERIFY_TOKEN,
@@ -93,139 +92,6 @@ function parseIntentBasedQA() {
     answer: `Amazing choice! Here are our most loved products:\n1. Himalayan White Rajma – ₹347 / ₹691\n2. Himalayan Red Rajma – ₹347 / ₹691\n3. Badri Cow Ghee – from ₹450 Onwards.\n4. Himalayan Black Soyabean – ₹347 / ₹691\n5. Himalayan Red Rice & Herbs – from ₹347`,
     intents: ['View Products', "Customer Reviews"]
   });
-
-
-
-
-
-
-  // intentBasedQA.set('why people love us', {
-  //   answer: `We're glad you're curious!💚\nHere’s why our community loves Orang Utan Organics 👇\nPick what you’d like to explore:`,
-  //   intents: ['Nutrition info', 'Farmer Impact', 'Main Menu']
-  // });
-
-  // intentBasedQA.set('back 2 y ppl <3 us', {
-  //   answer: `We're glad you're curious!!💚\nHere’s why our community loves Orang Utan Organics 👇\nPick what you’d like to explore:`,
-  //   intents: ['Nutrition info', 'Farmer Impact', 'Main Menu']
-  // });
-
-  // intentBasedQA.set('nutrition info', {
-  //   answer: `Our products are:\n• 100% Himalayan grown & natural\n• NABL Lab-Tested for purity & nutrients\n• Rich in Iron, Fiber, and Antioxidants 🌾\nHere is Nutrition Info Table: https://orangutanorganics.net/nutrition`,
-  //   intents: ["Recipes", 'Sourcing Story', 'View Products', "back 2 y ppl <3 us"]
-  // });
-
-  // intentBasedQA.set('back 2 nutri info', {
-  //   answer: `Our products are:\n• 100% Himalayan grown & natural\n• NABL Lab-Tested for purity & nutrients\n• Rich in Iron, Fiber, and Antioxidants 🌾\nHere is Nutrition Info Table: https://orangutanorganics.net/nutrition`,
-  //   intents: ["Recipes", 'Sourcing Story', 'View Products', "back 2 y ppl <3 us"]
-  // });
-
-  // intentBasedQA.set('recipes', {
-  //   answer: `Explore farm-fresh, nutritious recipes from our chef community:\n🥄 Red Rajma Curry with Tempering Spice\n🥄 Soyabean Stir-Fry\n🥄 Ghee-roasted Red Rice\nGet one sent to you now? View Recipe: https://orangutanorganics.net/recipes`,
-  //   intents: ['View Products', 'back 2 nutri info']
-  // });
-
-  // intentBasedQA.set('farmer impact', {
-  //   answer: `We directly reinvest in:\n• Soil conservation 🌍\n• Enhancing livelihoods via our farmers consortium 📘\n• Organic certifications for villages 🧾\nSee our Farmer’s Impact : https://orangutanorganics.net/farmerimpact`,
-  //   intents: ['View Products', 'back 2 y ppl <3 us']
-  // });
-
-  // intentBasedQA.set('sourcing story', {
-  //   answer: `Every purchase helps a real Himalayan farmer.\n✅ Small landholder support\n✅ Gangotri Valley & high altitude-based collective\n✅ Traceable from farm to pack\nWant to see how your food travels from seed to shelf? Track Origin: https://orangutanorganics.net/`,
-  //   intents: ['Where we’re from', 'Why It Matters', 'Trace Your Products', "Main Menu"]
-  // });
-
-  // intentBasedQA.set('back2 sourcing story', {
-  //   answer: `Every purchase helps a real Himalayan farmer.\n✅ Small landholder support\n✅ Gangotri Valley & high altitude-based collective\n✅ Traceable from farm to pack\nWant to see how your food travels from seed to shelf? Track Origin: https://orangutanorganics.net/`,
-  //   intents: ['Where we’re from', 'Why It Matters', 'Trace Your Products', "Main Menu"]
-  // });
-
-  // intentBasedQA.set('where we’re from', {
-  //   answer: `We’re rooted in Village Bhangeli, 2300m above sea level, in the Gangotri Valley 🏞\n🌱 Certified Organic Base\n📍 46 km from Uttarkashi, Uttarakhand\n💚 Home to just 40 small landholder families we support\nWould you like to see what life looks like up here? View Gallery: https://www.instagram.com/orangutan.organics/`,
-  //   intents: ['View Products', 'Back2 Sourcing Story']
-  // });
-
-  // intentBasedQA.set('why it matters', {
-  //   answer: `We protect:\n• Native seeds & biodiversity\n• Water sources & soil health\n• Farmer dignity & livelihoods\nBuying from us = standing up for the planet & Himalayan farmers. Learn about our latest impact project? See Report: https://orangutanorganics.net/whyitmatters`,
-  //   intents: ['View Products', 'Back2 Sourcing Story']
-  // });
-
-  // intentBasedQA.set('trace your products', {
-  //   answer: `Every product is traceable🔁 From seed-to-shelf, you’ll know:\n• The exact farm\n• The harvest date\n• The batch testing results\nWant to trace your future order?\nSee how it works: https://orangutanorganics.net/traceability`,
-  //   intents: ['How It Works', 'View Products', 'Back2 Sourcing Story']
-  // });
-
-  // intentBasedQA.set('how it works', {
-  //   answer: `We are tracing our products from our Himalayan farm to your plate with just a QR code, launching soon. We’ll notify you when it’s live!`,
-  //   intents: ['View Products', 'Back2 Sourcing Story']
-  // });
-
-  // intentBasedQA.set('shop & explore', {
-  //   answer: `Amazing choice! Here are our most loved products:\n1. Himalayan White Rajma – ₹347 / ₹691\n2. Himalayan Red Rajma – ₹347 / ₹691\n3. Badri Cow Ghee – from ₹450 Onwards.\n4. Himalayan Black Soyabean – ₹347 / ₹691\n5. Himalayan Red Rice & Herbs – from ₹347`,
-  //   intents: ['Buy Products', "Customer Reviews", "Main Menu"]
-  // });
-
-  // intentBasedQA.set('back2 shop & explore', {
-  //   answer: `Amazing choice! Here are our most loved products:\n1. Himalayan White Rajma – ₹347 / ₹691\n2. Himalayan Red Rajma – ₹347 / ₹691\n3. Badri Cow Ghee – from ₹450 Onwards.\n4. Himalayan Black Soyabean – ₹347 / ₹691\n5. Himalayan Red Rice & Herbs – from ₹347`,
-  //   intents: ['Buy Products', "Customer Reviews", "Main Menu"]
-  // });
-
-  // intentBasedQA.set('buy products', {
-  //   answer: `Amazing choice! Here are our most loved products:\n1. Himalayan White Rajma – ₹347 / ₹691\n2. Himalayan Red Rajma – ₹347 / ₹691\n3. Badri Cow Ghee – from ₹450 Onwards.\n4. Himalayan Black Soyabean – ₹347 / ₹691\n5. Himalayan Red Rice & Herbs – from ₹347`,
-  //   intents: ['View Products', "Back2 Shop & Explore"]
-  // });
-
-  // intentBasedQA.set('customer reviews', {
-  //   answer: `Don’t just take our word for it 💬\nHere’s what conscious buyers like you are saying 👇\nWebsite and amazon review: https://orangutanorganics.net/reviews \nInstagram love: https://www.instagram.com/p/DOIOa4rkv5C/`,
-  //   intents: ['View Products', 'Back2 Shop & Explore']
-  // });
-
-  // intentBasedQA.set('track your order', {
-  //   answer: `Please type your 14 digit AWB in chat`,
-  // });
-
-  // intentBasedQA.set('have a query', {
-  //   answer: `Please type your 14 digit AWB in chat`,
-  //   intents: ['View Products', "Customer Reviews"]
-  // });
-
-
-
-
-
-
-
-
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  // intentBasedQA.set('our story', {
-  //   answer: `We’re not just a brand — we’re Forest People. Here’s what sets us apart.`,
-  //   intents: ['Where We’re From', 'Why It Matters', 'Trace Your Products']
-  // });
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  // intentBasedQA.set('buy later', {
-  //   answer: `Still thinking? No rush… but our small-batch treasures don’t hang around for long ✨, ust share your name & email so we can send you exclusive Himalayan food tips, recipes & offers 🌱✨`,
-  // });
 }
 
 
@@ -243,7 +109,7 @@ async function sendWhyPeopleLoveUs(to) {
           body: {
             text: `We're glad you're curious!💚
 Here’s why our community loves Orang Utan Organics 👇
-Pick what you’d like to explore:`
+\nPick what you’d like to explore:`
           },
           action: {
             buttons: [
@@ -300,7 +166,7 @@ async function sendwherewe(to) {
         interactive: {
           type: "button",
           body: {
-            text: `We’re rooted in Village Bhangeli, 2300m above sea level, in the Gangotri Valley 🏞\n🌱 Certified Organic Base\n📍 46 km from Uttarkashi, Uttarakhand\n💚 Home to just 40 small landholder families we support\nWould you like to see what life looks like up here? View Gallery: https://www.instagram.com/orangutan.organics/`,
+            text: `We’re rooted in Village Bhangeli, 2300m above sea level, in the Gangotri Valley 🏞\n🌱 Certified Organic Base\n📍 46 km from Uttarkashi, Uttarakhand\n💚 Home to just 40 small landholder families we support\n\nWould you like to see what life looks like up here?\nView Gallery: https://www.instagram.com/orangutan.organics/`,
           },
           action: {
             buttons: [
@@ -350,7 +216,7 @@ async function sendmatters(to) {
         interactive: {
           type: "button",
           body: {
-            text: `We protect:\n• Native seeds & biodiversity\n• Water sources & soil health\n• Farmer dignity & livelihoods\nBuying from us = standing up for the planet & Himalayan farmers. Learn about our latest impact project? See Report: https://orangutanorganics.net/whyitmatters`,
+            text: `We protect:\n• Native seeds & biodiversity\n• Water sources & soil health\n• Farmer dignity & livelihoods\nBuying from us = standing up for the planet & Himalayan farmers. Learn about our latest impact project? See Report: https://orangutanorganics.com/why-it-matters`,
           },
           action: {
             buttons: [
@@ -450,7 +316,7 @@ async function sendtraceprod(to) {
         interactive: {
           type: "button",
           body: {
-            text: `Every product is traceable🔁 From seed-to-shelf, you’ll know:\n• The exact farm\n• The harvest date\n• The batch testing results\nWant to trace your future order?\nSee how it works: https://orangutanorganics.net/traceability`,
+            text: `Every product is traceable🔁 From seed-to-shelf, you’ll know:\n• The exact farm\n• The harvest date\n• The batch testing results\nWant to trace your future order?\nSee how it works: https://orangutanorganics.com/who-are-we/traceability`,
           },
           action: {
             buttons: [
@@ -508,7 +374,7 @@ async function sendshopandexplore(to) {
         interactive: {
           type: "button",
           body: {
-            text: `Amazing choice! Here are our most loved products:\n1. Himalayan White Rajma – ₹347 / ₹691\n2. Himalayan Red Rajma – ₹347 / ₹691\n3. Badri Cow Ghee – from ₹450 Onwards.\n4. Himalayan Black Soyabean – ₹347 / ₹691\n5. Himalayan Red Rice & Herbs – from ₹347`,
+            text: `Amazing choice! Here are our most loved products:\n1. Himalayan White Rajma – ₹347 / ₹691\n2. Himalayan Red Rajma – ₹347 / ₹691\n3. Badri Cow Ghee – from ₹450 Onwards.\n4. Himalayan Black Soyabean – ₹347 / ₹691\n5. Himalayan Red Rice & Herbs – from ₹347 \n We are also available in Amazon.`,
           },
           action: {
             buttons: [
@@ -555,105 +421,6 @@ async function sendshopandexplore(to) {
   }
 }
 
-// async function sendbuyprod(to) {
-//   try {
-//     await axios.post(
-//       GRAPH_URL,
-//       {
-//         messaging_product: "whatsapp",
-//         to,
-//         type: "interactive",
-//         interactive: {
-//           type: "button",
-//           body: {
-//             text: `Amazing choice! Here are our most loved products:\n1. Himalayan White Rajma – ₹347 / ₹691\n2. Himalayan Red Rajma – ₹347 / ₹691\n3. Badri Cow Ghee – from ₹450 Onwards.\n4. Himalayan Black Soyabean – ₹347 / ₹691\n5. Himalayan Red Rice & Herbs – from ₹347`,
-//           },
-//           action: {
-//             buttons: [
-//               {
-//                 type: "reply",
-//                 reply: {
-//                   id: "prod_104",
-//                   title: "View Products"
-//                 }
-//               },
-//               {
-//                 type: "reply",
-//                 reply: {
-//                   id: "stop_101",
-//                   title: "Back2 Shop & Explore"
-//                 }
-//               }
-//             ]
-//           }
-//         }
-//       },
-//       {
-//         headers: {
-//           Authorization: `Bearer ${ACCESS_TOKEN}`,
-//           "Content-Type": "application/json"
-//         }
-//       }
-//     );
-
-//     console.log(`✅ Sent "Why People Love Us" quick reply message to ${to}`);
-//   } catch (err) {
-//     console.error(
-//       "sendWhyPeopleLoveUs error:",
-//       err.response?.data || err.message || err
-//     );
-//   }
-// }
-
-// async function sendbuyprod(to) {
-//   try {
-//     await axios.post(
-//       GRAPH_URL,
-//       {
-//         messaging_product: "whatsapp",
-//         to,
-//         type: "interactive",
-//         interactive: {
-//           type: "button",
-//           body: {
-//             text: `Amazing choice! Here are our most loved products:\n1. Himalayan White Rajma – ₹347 / ₹691\n2. Himalayan Red Rajma – ₹347 / ₹691\n3. Badri Cow Ghee – from ₹450 Onwards.\n4. Himalayan Black Soyabean – ₹347 / ₹691\n5. Himalayan Red Rice & Herbs – from ₹347`,
-//           },
-//           action: {
-//             buttons: [
-//               {
-//                 type: "reply",
-//                 reply: {
-//                   id: "prod_104",
-//                   title: "View Products"
-//                 }
-//               },
-//               {
-//                 type: "reply",
-//                 reply: {
-//                   id: "stop_101",
-//                   title: "Back2 Shop & Explore"
-//                 }
-//               }
-//             ]
-//           }
-//         }
-//       },
-//       {
-//         headers: {
-//           Authorization: `Bearer ${ACCESS_TOKEN}`,
-//           "Content-Type": "application/json"
-//         }
-//       }
-//     );
-
-//     console.log(`✅ Sent "Why People Love Us" quick reply message to ${to}`);
-//   } catch (err) {
-//     console.error(
-//       "sendWhyPeopleLoveUs error:",
-//       err.response?.data || err.message || err
-//     );
-//   }
-// }
 
 async function sendcustreview(to) {
   try {
@@ -666,7 +433,7 @@ async function sendcustreview(to) {
         interactive: {
           type: "button",
           body: {
-            text: `Don’t just take our word for it 💬\nHere’s what conscious buyers like you are saying 👇\nWebsite and amazon review: https://orangutanorganics.net/reviews \nInstagram love: https://www.instagram.com/p/DOIOa4rkv5C/`,
+            text: `Don’t just take our word for it 💬\nHere’s what conscious buyers like you are saying 👇\nWebsite and amazon review: https://orangutanorganics.com/products \n\nInstagram love: https://www.instagram.com/p/DOIOa4rkv5C/`,
           },
           action: {
             buttons: [
@@ -705,55 +472,6 @@ async function sendcustreview(to) {
   }
 }
 
-// async function sendtrackord(to) {
-//   try {
-//     await axios.post(
-//       GRAPH_URL,
-//       {
-//         messaging_product: "whatsapp",
-//         to,
-//         type: "interactive",
-//         interactive: {
-//           type: "button",
-//           body: {
-//             text: `Please type your 14 digit AWB in chat`,
-//           },
-//           // action: {
-//           //   buttons: [
-//           //     {
-//           //       type: "reply",
-//           //       reply: {
-//           //         id: "prod_105",
-//           //         title: "View Products"
-//           //       }
-//           //     },
-//           //     {
-//           //       type: "reply",
-//           //       reply: {
-//           //         id: "stop_102",
-//           //         title: "Back2 Shop & Explore"
-//           //       }
-//           //     }
-//           //   ]
-//           // }
-//         }
-//       },
-//       {
-//         headers: {
-//           Authorization: `Bearer ${ACCESS_TOKEN}`,
-//           "Content-Type": "application/json"
-//         }
-//       }
-//     );
-
-//     console.log(`✅ Sent "Why People Love Us" quick reply message to ${to}`);
-//   } catch (err) {
-//     console.error(
-//       "sendWhyPeopleLoveUs error:",
-//       err.response?.data || err.message || err
-//     );
-//   }
-// }
 
 async function sendrecipes(to) {
   try {
@@ -766,7 +484,7 @@ async function sendrecipes(to) {
         interactive: {
           type: "button",
           body: {
-            text: `Explore farm-fresh, nutritious recipes from our chef community:\n🥄 Red Rajma Curry with Tempering Spice\n🥄 Soyabean Stir-Fry\n🥄 Ghee-roasted Red Rice\nGet one sent to you now? View Recipe: https://orangutanorganics.net/recipes`,
+            text: `Explore farm-fresh, nutritious recipes from our chef community:\n🥄 Red Rajma Curry with Tempering Spice\n🥄 Soyabean Stir-Fry\n🥄 Ghee-roasted Red Rice\nGet one sent to you now? View Recipe: https://orangutanorganics.com/who-are-we/recipes`,
           },
           action: {
             buttons: [
@@ -816,7 +534,7 @@ async function sendfarmerimpact(to) {
         interactive: {
           type: "button",
           body: {
-            text: `We directly reinvest in:\n• Soil conservation 🌍\n• Enhancing livelihoods via our farmers consortium 📘\n• Organic certifications for villages 🧾\nSee our Farmer’s Impact : https://orangutanorganics.net/farmerimpact`,
+            text: `We directly reinvest in:\n• Soil conservation 🌍\n• Enhancing livelihoods via our farmers consortium 📘\n• Organic certifications for villages 🧾\nSee our Farmer’s Impact : https://orangutanorganics.com/who-are-we/farmer-impact`,
           },
           action: {
             buttons: [
@@ -1015,19 +733,19 @@ async function sendWhatsAppList(to) {
         type: "list",
         header: {
           type: "text",
-          text: "Namaste from OrangUtan Organics 🌱",
+          text: "Namaste from Orang Utan Organics 🌱",
         },
         body: {
-          text: "Perched at 2,300 mtr in the Gangotri Valley, we are here to share the true taste of the Himalayas. How can we brighten your day?",
+          text: `Perched at 2,300 mtr in the Gangotri Valley, we are here to share the true taste of the Himalayas. \nHow can we brighten your day?`,
         },
         action: {
           button: "Options",
           sections: [
             {
               rows: [
-                { id: "1001", title: "Why People Love Us" },
-                { id: "1002", title: "Sourcing Story" },
-                { id: "1003", title: "Shop & Explore" },
+                 { id: "1001", title: "Shop & Explore" },
+                { id: "1002", title: "Why People Love Us" },
+                { id: "1003", title: "Sourcing Story" },
                 { id: "1004", title: "Track Your Order" },
                 { id: "1005", title: "Have A Query" },
               ],
@@ -1065,7 +783,7 @@ async function sendWhatsAppList_ss(to) {
           text: "",
         },
         body: {
-          text: "Every purchase helps a real Himalayan farmer.\n✅ Small landholder support\n✅ Gangotri Valley & high altitude-based collective\n✅ Traceable from farm to pack\nWant to see how your food travels from seed to shelf? Track Origin: https://orangutanorganics.net/traceability",
+          text: "Every purchase helps a real Himalayan farmer.\n✅ Small landholder support\n✅ Gangotri Valley & high altitude-based collective\n✅ Traceable from farm to pack\nWant to see how your food travels from seed to shelf? Track Origin: https://orangutanorganics.com/who-are-we/traceability",
         },
         action: {
           button: "Options",
@@ -1112,7 +830,7 @@ async function sendWhatsAppList_ni(to) {
           text: "",
         },
         body: {
-          text: "Our products are:\n• 100% Himalayan grown & natural\n• NABL Lab-Tested for purity & nutrients\n• Rich in Iron, Fiber, and Antioxidants 🌾\nHere is Nutrition Info Table: https://orangutanorganics.net/nutrition",
+          text: "Our products are:\n• 100% Himalayan grown & natural\n• NABL Lab-Tested for purity & nutrients\n• Rich in Iron, Fiber, and Antioxidants 🌾\nHere is Nutrition Info Table: https://orangutanorganics.com/nutrition",
         },
         action: {
           button: "Options",
@@ -1145,45 +863,6 @@ async function sendWhatsAppList_ni(to) {
   }
 }
 
-// async function sendWhatsAppCatalog(to) {
-//   try {
-//     await axios.post(GRAPH_URL,
-//       {
-//         messaging_product: "whatsapp",
-//         to,
-//         type: "interactive",
-//         interactive: {
-//           type: "product_list",
-//           header: { type: "text", text: "Featured Products 🌟" },
-//           body: { text: "Browse our catalog and pick your favorites 🌱" },
-//           footer: { text: "OrangUtan Organics" },
-//           action: {
-//             catalog_id: "1262132998945503",
-//             sections: [
-//               {
-//                 title: "Our Products",
-//                 product_items: [
-//                   { product_retailer_id: "43mypu8dye" },
-//                   { product_retailer_id: "l722c63kq9" },
-//                   { product_retailer_id: "kkii6r9uvh" },
-//                   { product_retailer_id: "m519x5gv9s" },
-//                   { product_retailer_id: "294l11gpcm" },
-//                   { product_retailer_id: "ezg1lu6edm" },
-//                   { product_retailer_id: "tzz72lpzz2" },
-//                   { product_retailer_id: "esltl7pftq" },
-//                   { product_retailer_id: "obdqyehm1w" }
-//                 ]
-//               }
-//             ]
-//           }
-//         }
-//       },
-//       { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } }
-//     );
-//   } catch (err) {
-//     console.error('sendWhatsAppCatalog error', err.response?.data || err.message || err);
-//   }
-// }
 
 
 
@@ -1215,7 +894,9 @@ async function sendWhatsAppCatalog(to) {
                   { product_retailer_id: "ezg1lu6edm" },
                   { product_retailer_id: "tzz72lpzz2" },
                   { product_retailer_id: "esltl7pftq" },
-                  { product_retailer_id: "obdqyehm1w" }
+                  { product_retailer_id: "obdqyehm1w" },
+                  { product_retailer_id: "5diu7mcmbf" },
+                  { product_retailer_id: "324pmzr4c9" }
                 ]
               }
             ]
@@ -1370,7 +1051,11 @@ const getProductName =
     "ezg1lu6edm":"Himalayan Red Rajma 500gm" ,
     "tzz72lpzz2":"Himalayan Red Rajma 1kg" ,
     "esltl7pftq":"Wild Himalayan Tempering Spice" ,
-    "obdqyehm1w":"Himalayan Red Rice"};
+    "obdqyehm1w":"Himalayan Red Rice",
+    "5diu7mcmbf":"Himalayan Black Soyabean 500gm",
+    "324pmzr4c9":"Himalayan Black Soyabean 1kg"
+  
+  };
 
 const getProductWeight =
   { "43mypu8dye":120 ,
@@ -1381,7 +1066,10 @@ const getProductWeight =
     "ezg1lu6edm":500 ,
     "tzz72lpzz2":1000 ,
     "esltl7pftq":100 ,
-    "obdqyehm1w":1000};
+    "obdqyehm1w":1000,
+    "5diu7mcmbf":500,
+    "324pmzr4c9":1000
+  };
 
 // ---------------- NEW: send order_details (WhatsApp native payment) ----------------
 async function sendWhatsAppOrderDetails(to, session) {
@@ -1687,76 +1375,13 @@ if (!completedUsers.has(from)) {
     if (!completedUsers.has(from)) {
       await sendWhatsAppText(
         from,
-        "Still thinking? No rush… but our small-batch treasures don’t hang around for long ✨, just share your name & email so we can send you exclusive Himalayan food tips, & recipes."
+        "Still thinking?\n\nNo rush… but our small-batch treasures don’t hang around for long ✨,\n\nJust share your name & email so we can send you exclusive Himalayan food tips, & recipes."
       );
       remindedUsers.add(from);
       console.log(`⏰ Reminder sent to ${from}`);
     }
-  }, 30 * 60 * 1000);
+  }, 3 * 60 * 60 * 1000);
 }
-
-
-// if (!resolvedUsers.has(from)) {
-//   // Clear any existing timer for this user
-//   if (idleTimers[from]) clearTimeout(idleTimers[from]);
-
-//   // Set new 45-minute timer
-//   idleTimers[from] = setTimeout(async () => {
-//     // Only send if user still hasn’t resolved query
-//     if (!resolvedUsers.has(from)) {
-//       try {
-//         await axios.post(
-//           GRAPH_URL,
-//           {
-//             messaging_product: "whatsapp",
-//             to: from,
-//             type: "interactive",
-//             interactive: {
-//               type: "button",
-//               body: {
-//                 text: "Have we resolved your query?"
-//               },
-//               action: {
-//                 buttons: [
-//                   {
-//                     type: "reply",
-//                     reply: {
-//                       id: "resolved_yes",
-//                       title: "✅ Yes"
-//                     }
-//                   },
-//                   {
-//                     type: "reply",
-//                     reply: {
-//                       id: "resolved_no",
-//                       title: "❌ No"
-//                     }
-//                   }
-//                 ]
-//               }
-//             }
-//           },
-//           {
-//             headers: {
-//               Authorization: `Bearer ${ACCESS_TOKEN}`,
-//               "Content-Type": "application/json"
-//             }
-//           }
-//         );
-
-//         console.log(`⏰ 45-min follow-up sent to ${from}`);
-//       } catch (err) {
-//         console.error(
-//           "sendFollowUp error",
-//           err.response?.data || err.message || err
-//         );
-//       }
-//     }
-//   }, 12 * 1000); // 45 minutes
-// }
-
-  // ---- If user replies with name + email after reminder ----
-// ---- If user replies with name + email after reminder ----
 
 
 
