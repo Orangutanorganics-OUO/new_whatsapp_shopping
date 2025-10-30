@@ -50,6 +50,8 @@ app.use('/api/checkout', checkoutRoutes);
 
 
 
+
+// --- ENV ---
 const {
   PORT = 3000,
   VERIFY_TOKEN,
@@ -374,7 +376,7 @@ async function sendshopandexplore(to) {
         interactive: {
           type: "button",
           body: {
-            text: `Amazing choice! Here are our most loved products:\n1. Himalayan White Rajma – ₹347 / ₹691\n2. Himalayan Red Rajma – ₹347 / ₹691\n3. Badri Cow Ghee – from ₹450 Onwards.\n4. Himalayan Black Soyabean – ₹347 / ₹691\n5. Himalayan Red Rice & Herbs – from ₹347 \n We are also available in Amazon.`,
+            text: `Amazing choice! Here are our most loved products:\n1. Himalayan White Rajma – ₹347 / ₹691\n2. Himalayan Red Rajma – ₹347 / ₹691\n3. Badri Cow Ghee – from ₹450 Onwards.\n4. Himalayan Black Soyabean – ₹347 / ₹691\n5. Himalayan Red Rice & Herbs – from ₹347 \n\nWe are also available on Amazon.`,
           },
           action: {
             buttons: [
@@ -745,7 +747,6 @@ async function sendWhatsAppList(to) {
               rows: [
                  { id: "1001", title: "Shop & Explore" },
                 { id: "1002", title: "Why People Love Us" },
-                { id: "1003", title: "Sourcing Story" },
                 { id: "1004", title: "Track Your Order" },
                 { id: "1005", title: "Have A Query" },
               ],
@@ -923,6 +924,10 @@ async function sendWhatsAppCatalog(to) {
         type: "interactive",
         interactive: {
           type: "button",
+          header: {
+          type: "text",
+          text: "OR",
+        },
           body: {
             text: "Would you like to return to the Main Menu?"
           },
