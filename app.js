@@ -69,6 +69,7 @@ const {
   PAYMENTS_LOOKUP_BASE_URL,
   PAYMENTS_LOOKUP_API_KEY
 } = process.env;
+const phoneNumberId = process.env.PHONE_NUMBER_ID;
 
 
 let pdfText = '';
@@ -1128,6 +1129,11 @@ async function sendWhatsAppOrderDetails(to, session) {
       console.warn('Error retrieving delhivery charges for prepaid', err.message || err);
     }
 
+    // Set shipping charge to zero if greater than 1000 rupees
+    if (shippingChargePaise > 1000 * 100) {
+      shippingChargePaise = 0;
+    }
+
     session.shipping_charge = shippingChargePaise;
 
 
@@ -1220,6 +1226,11 @@ async function finalizePaidOrder(session, paymentInfo = {}) {
       }
     } catch (err) {
       console.warn('Error retrieving delhivery charges for prepaid', err.message || err);
+    }
+
+    // Set shipping charge to zero if greater than 1000 rupees
+    if (shippingChargePaise > 1000 * 100) {
+      shippingChargePaise = 0;
     }
 
     session.shipping_charge = shippingChargePaise;
@@ -1345,7 +1356,12 @@ app.get('/', (req, res) => {
 // Incoming WhatsApp messages
 app.post('/', async (req, res) => {
   const msg = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-  console.log("message rec : ------------------------------------>", msg);
+  const metadata = req.body.entry?.[0]?.changes?.[0]?.value?.metadata;
+  const phoneIdFromMessage = metadata?.phone_number_id;
+  if (phoneIdFromMessage !== phoneNumberId) {
+    console.log(`Ignoring message sent to different number: ${phoneIdFromMessage}`);
+    return res.sendStatus(200);
+  }
   
   if (!msg) return res.sendStatus(200);
 
@@ -1464,7 +1480,12 @@ if (!completedUsers.has(from)) {
               console.warn('Failed to get Delhivery charges, continuing with shippingChargePaise=0', err.message || err);
             }
             // console.log("ship_cost=",shippingChargePai
-            
+
+            // Set shipping charge to zero if greater than 1000 rupees
+            if (shippingChargePaise > 1000 * 100) {
+              shippingChargePaise = 0;
+            }
+
             session.amount = (session.amount || 0) + codChargePaise + shippingChargePaise;
             session.payment_mode = 'COD';
             session.shipping_charge = shippingChargePaise;
