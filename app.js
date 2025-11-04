@@ -1129,8 +1129,8 @@ async function sendWhatsAppOrderDetails(to, session) {
       console.warn('Error retrieving delhivery charges for prepaid', err.message || err);
     }
 
-    // Set shipping charge to zero if greater than 1000 rupees
-    if (shippingChargePaise > 1000 * 100) {
+    // Set shipping charge to zero if order value is greater than 1000 rupees
+    if (prod_cost > 1000 * 100) {
       shippingChargePaise = 0;
     }
 
@@ -1228,8 +1228,8 @@ async function finalizePaidOrder(session, paymentInfo = {}) {
       console.warn('Error retrieving delhivery charges for prepaid', err.message || err);
     }
 
-    // Set shipping charge to zero if greater than 1000 rupees
-    if (shippingChargePaise > 1000 * 100) {
+    // Set shipping charge to zero if order value is greater than 1000 rupees
+    if (session.amount > 1000 * 100) {
       shippingChargePaise = 0;
     }
 
@@ -1481,8 +1481,8 @@ if (!completedUsers.has(from)) {
             }
             // console.log("ship_cost=",shippingChargePai
 
-            // Set shipping charge to zero if greater than 1000 rupees
-            if (shippingChargePaise > 1000 * 100) {
+            // Set shipping charge to zero if order value is greater than 1000 rupees
+            if (session.amount > 1000 * 100) {
               shippingChargePaise = 0;
             }
 
