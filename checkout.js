@@ -4,15 +4,94 @@ import axios from 'axios';
 const router = express.Router();
 const GOOGLE_SHEETS_URL = process.env.GOOGLE_SHEETS_URL;
 
+// WhatsApp Meta API credentials
+const WHATSAPP_ACCESS_TOKEN = process.env.ACCESS_TOKEN;
+const WHATSAPP_PHONE_NO_ID = process.env.PHONE_NUMBER_ID_2;
+const WHATSAPP_TEMPLATE_NAME = "website_customer_order_whatsapp_message";
+const WHATSAPP_LANGUAGE_CODE = "en";
+
+/**
+ * Helper: Send WhatsApp Template Message
+ */
+async function sendWhatsAppMessage({ name, phone, order_id }) {
+  try {
+    if (!phone) {
+      console.warn('❌ WhatsApp: Missing phone number');
+      return;
+    }
+
+    // Ensure phone number starts with '+'
+    const formattedPhone = phone.startsWith('+') ? phone : `+${phone}`;
+
+    const url = `https://graph.facebook.com/v22.0/${WHATSAPP_PHONE_NO_ID}/messages`;
+
+    // const payload = {
+    //   messaging_product: 'whatsapp',
+    //   to: formattedPhone,
+    //   type: 'template',
+    //   template: {
+    //     name: WHATSAPP_TEMPLATE_NAME,
+    //     language: { code: WHATSAPP_LANGUAGE_CODE },
+    //     components: [
+    //       {
+    //         type: 'header',
+    //         parameters: [
+    //           {
+    //             type: 'image',
+    //             image: { id: WHATSAPP_MEDIA_ID },
+    //           },
+    //         ],
+    //       },
+    //       {
+    //         type: 'body',
+    //         parameters: [
+    //           { type: 'text', text: name || 'Customer' }, // {{1}} variable
+    //           { type: 'text', text: order_id || '1001' }, // {{1}} variable
+    //         ],
+    //       },
+    //     ],
+    //   },
+    // };
+    const payload = {
+  messaging_product: 'whatsapp',
+  to: formattedPhone,
+  type: 'template',
+  template: {
+    name: WHATSAPP_TEMPLATE_NAME,
+    language: { code: WHATSAPP_LANGUAGE_CODE },
+    components: [
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: name || 'Customer' },   // {{1}} = Name
+          { type: 'text', text: order_id || '1001' },   // {{2}} = Order ID
+        ],
+      },
+    ],
+  },
+};
+
+
+    await axios.post(url, payload, {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    console.log(`✅ WhatsApp message sent to ${formattedPhone}`);
+  } catch (err) {
+    console.error('❌ WhatsApp send error:', err.response?.data || err.message);
+  }
+}
+
 /**
  * POST /api/checkout/save-order
- * Save order to Google Sheets
  */
 router.post('/save-order', async (req, res) => {
   try {
     const orderData = req.body;
 
-    // Validation
     if (!orderData.type || orderData.type !== 'checkout') {
       return res.status(400).json({
         success: false,
@@ -29,12 +108,18 @@ router.post('/save-order', async (req, res) => {
 
     console.log('Saving order to Google Sheets:', orderData.orderId);
 
-    // Send to Google Sheets
     await axios.post(GOOGLE_SHEETS_URL, orderData, {
       headers: { 'Content-Type': 'application/json' },
     });
 
     console.log('Order saved successfully:', orderData.orderId);
+
+    // ✅ Send WhatsApp message after successful save
+    await sendWhatsAppMessage({
+      name: orderData.customerName,
+      phone: orderData.customerPhone,
+      order_id: orderData.orderId
+    });
 
     return res.json({
       success: true,
@@ -54,7 +139,6 @@ router.post('/save-order', async (req, res) => {
 
 /**
  * POST /api/checkout/process-cod
- * Process COD order (complete flow)
  */
 router.post('/process-cod', async (req, res) => {
   try {
@@ -101,11 +185,16 @@ router.post('/process-cod', async (req, res) => {
         headers: { 'Content-Type': 'application/json' },
       });
       console.log('✅ Order saved to Google Sheets');
+
+      // ✅ Send WhatsApp message
+      await sendWhatsAppMessage({
+        name: orderData.customerName,
+        phone: orderData.customerPhone,
+      });
     } catch (sheetError) {
       console.error('❌ Google Sheets error:', sheetError.message);
     }
 
-    // Return success
     return res.json({
       success: true,
       orderId: orderData.orderId,
@@ -125,7 +214,6 @@ router.post('/process-cod', async (req, res) => {
 
 /**
  * POST /api/checkout/process-prepaid
- * Process prepaid order after payment verification
  */
 router.post('/process-prepaid', async (req, res) => {
   try {
@@ -133,7 +221,6 @@ router.post('/process-prepaid', async (req, res) => {
 
     console.log('Processing Prepaid order:', orderData.orderId);
 
-    // Step 1: Create Delhivery shipment (after payment is verified)
     let delhiveryResponse = null;
     try {
       const payload = { shipments: [shipmentData], pickup_location: pickupLocation };
@@ -161,7 +248,6 @@ router.post('/process-prepaid', async (req, res) => {
       };
     }
 
-    // Step 2: Save order to Google Sheets
     const orderDataWithDetails = {
       ...orderData,
       paymentId: paymentDetails.payment_id,
@@ -173,11 +259,16 @@ router.post('/process-prepaid', async (req, res) => {
         headers: { 'Content-Type': 'application/json' },
       });
       console.log('✅ Prepaid order saved to Google Sheets');
+
+      // ✅ Send WhatsApp message
+      await sendWhatsAppMessage({
+        name: orderData.customerName,
+        phone: orderData.customerPhone,
+      });
     } catch (sheetError) {
       console.error('❌ Google Sheets error:', sheetError.message);
     }
 
-    // Return success
     return res.json({
       success: true,
       orderId: orderData.orderId,
