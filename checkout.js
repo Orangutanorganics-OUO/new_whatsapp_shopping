@@ -116,8 +116,8 @@ router.post('/save-order', async (req, res) => {
 
     // ✅ Send WhatsApp message after successful save
     await sendWhatsAppMessage({
-      name: orderData.customerName,
-      phone: orderData.customerPhone,
+      name: orderData.name,
+      phone: orderData.phone,
       order_id: orderData.orderId
     });
 
@@ -188,8 +188,10 @@ router.post('/process-cod', async (req, res) => {
 
       // ✅ Send WhatsApp message
       await sendWhatsAppMessage({
-        name: orderData.customerName,
-        phone: orderData.customerPhone,
+        name: orderData.name,
+        phone: orderData.phone,
+      order_id: orderData.orderId
+        
       });
     } catch (sheetError) {
       console.error('❌ Google Sheets error:', sheetError.message);
@@ -262,8 +264,9 @@ router.post('/process-prepaid', async (req, res) => {
 
       // ✅ Send WhatsApp message
       await sendWhatsAppMessage({
-        name: orderData.customerName,
-        phone: orderData.customerPhone,
+        name: orderData.name,
+        phone: orderData.phone,
+      order_id: orderData.orderId
       });
     } catch (sheetError) {
       console.error('❌ Google Sheets error:', sheetError.message);
