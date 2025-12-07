@@ -6,7 +6,6 @@ import { google } from 'googleapis';
 import ShortUniqueId from 'short-unique-id';
 import { extractTextFromPDF } from './pdf_reader.js'
 import { askGemini } from './gemini.js'
-// const cors = require('cors');
 import cors from 'cors';
 
 import helmet from 'helmet';
@@ -69,6 +68,7 @@ const {
   PAYMENTS_LOOKUP_BASE_URL,
   PAYMENTS_LOOKUP_API_KEY
 } = process.env;
+const phoneNumberId = process.env.PHONE_NUMBER_ID;
 
 
 let pdfText = '';
@@ -96,8 +96,6 @@ function parseIntentBasedQA() {
   });
 }
 
-
-// export default { parseIntentBasedQA };
 async function sendWhyPeopleLoveUs(to) {
   try {
     await axios.post(
@@ -686,6 +684,12 @@ const resolvedUsers = new Set();
 function normalizePhone(phone) { return (phone || '').replace(/\D/g, ""); }
 
 async function sendWhatsAppText(to, text) {
+  // Validate text is not empty
+  if (!text || text.trim() === '') {
+    console.warn(`⚠️ Attempted to send empty message to ${to}`);
+    return;
+  }
+
   try {
     await axios.post(GRAPH_URL, {
       messaging_product: 'whatsapp',
@@ -693,8 +697,9 @@ async function sendWhatsAppText(to, text) {
       type: 'text',
       text: { body: text }
     }, { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } });
+    console.log(`✅ Message sent to ${to}`);
   } catch (err) {
-    console.error('sendWhatsAppText error', err.response?.data || err.message || err);
+    console.error(`❌ Error sending message to ${to}:`, err.response?.data || err.message || err);
   }
 }
 
@@ -1128,6 +1133,11 @@ async function sendWhatsAppOrderDetails(to, session) {
       console.warn('Error retrieving delhivery charges for prepaid', err.message || err);
     }
 
+    // Set shipping charge to zero if order value is greater than 1000 rupees
+    if (prod_cost > 1000 * 100) {
+      shippingChargePaise = 0;
+    }
+
     session.shipping_charge = shippingChargePaise;
 
 
@@ -1220,6 +1230,11 @@ async function finalizePaidOrder(session, paymentInfo = {}) {
       }
     } catch (err) {
       console.warn('Error retrieving delhivery charges for prepaid', err.message || err);
+    }
+
+    // Set shipping charge to zero if order value is greater than 1000 rupees
+    if (session.amount > 1000 * 100) {
+      shippingChargePaise = 0;
     }
 
     session.shipping_charge = shippingChargePaise;
@@ -1345,7 +1360,12 @@ app.get('/', (req, res) => {
 // Incoming WhatsApp messages
 app.post('/', async (req, res) => {
   const msg = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-  console.log("message rec : ------------------------------------>", msg);
+  const metadata = req.body.entry?.[0]?.changes?.[0]?.value?.metadata;
+  const phoneIdFromMessage = metadata?.phone_number_id;
+  if (phoneIdFromMessage !== phoneNumberId) {
+    console.log(`Ignoring message sent to different number: ${phoneIdFromMessage}`);
+    return res.sendStatus(200);
+  }
   
   if (!msg) return res.sendStatus(200);
 
@@ -1367,8 +1387,6 @@ app.post('/', async (req, res) => {
     msgBody = "order_received";
   } else if(msg.type === "button") {
     msgBody = msg.button?.text.toLowerCase().trim() || "";
-    // console.log("---------------->", msgBody);
-    
   }
 
    // ---- Idle timer handling ----
@@ -1418,11 +1436,12 @@ if (!completedUsers.has(from)) {
     orderSessions[orderId] = session;
     phoneToOrderIds[from].push(orderId);
 
+    console.log(`📦 Order created - ID: ${orderId}, Customer: ${from}`);
     await sendWhatsAppText(from, `Thanks! We've received your delivery details. (OrderId: ${orderId})`);
 
     session.amount = session.amount || 0; // paise
     const paymentMode = (customerData.payment_mode || '').toLowerCase();
-    console.log("paymentMode:", paymentMode);
+    console.log(`💰 Payment mode selected: ${paymentMode.toUpperCase()} for order ${orderId}`);
 
     if (paymentMode === 'cod' || paymentMode === 'cash on delivery' || paymentMode === 'cash-on-delivery') {
       session.cod_error = true;
@@ -1463,15 +1482,17 @@ if (!completedUsers.has(from)) {
               session.cod_error = false;
               console.warn('Failed to get Delhivery charges, continuing with shippingChargePaise=0', err.message || err);
             }
-            // console.log("ship_cost=",shippingChargePai
-            
+
+            // Set shipping charge to zero if order value is greater than 1000 rupees
+            if (session.amount > 1000 * 100) {
+              shippingChargePaise = 0;
+            }
+
             session.amount = (session.amount || 0) + codChargePaise + shippingChargePaise;
             session.payment_mode = 'COD';
             session.shipping_charge = shippingChargePaise;
-            // session.cod_amount = codChargePaise;
-      
+
             // Build shipment object for Delhivery create.json
-            // console.log("insideeeee******** ",final_product_name);
             const shipment = {
               name: customerData.name || 'Customer',
               add: `${customerData.address1 || ''} ${customerData.address2 || ''}`.trim(),
@@ -1507,6 +1528,8 @@ if (!completedUsers.has(from)) {
       
             let delhiveryResp = null;
             delhiveryResp = await createDelhiveryShipment({ shipment });
+            console.log(`🚚 COD Shipment created for order ${session.orderId}, Amount: ₹${(session.amount/100).toFixed(2)}`);
+
             if(delhiveryResp.success && session.cod_error){
               // Append to Google Sheet
             try {
@@ -1531,15 +1554,18 @@ if (!completedUsers.has(from)) {
             }
       
             await sendWhatsAppText(from, `✅ Your COD order is placed. Total: ₹${(session.amount/100).toFixed(2)}. We'll notify you when it's shipped.`);
+            console.log(`✅ COD order completed - Order: ${session.orderId}`);
             }
             else{
               await sendWhatsAppText(from, `✅ Data you enter in flow is incorrect, Make sure you enter vaid data`);
+              console.log(`❌ COD order failed - Invalid data for order ${session.orderId}`);
             }
-            console.log("cod donee");
-            
+
             return res.sendStatus(200);
     } else {
       session.payment_mode = 'Prepaid';
+      console.log(`💳 Prepaid order initiated - Order: ${session.orderId}, Amount: ₹${(session.amount/100).toFixed(2)}`);
+
       try {
         const customerPayload = {
           phone: customerData.phone || from,
@@ -1601,10 +1627,7 @@ if (!completedUsers.has(from)) {
     msgBody = msg.text.body.toLowerCase().trim();
   }
 
-  console.log("message received : ", msgBody);
-  // console.log("message received : ", msgBody);
-  
-   
+  console.log(`📩 Message from ${from}: "${msgBody}"`);
 
   const intentResponse = findIntentBasedResponse(msgBody);
   
@@ -1678,20 +1701,8 @@ else if (/\b\d{14}\b/.test(msgBody)) {
     
   }
   else if (/track your order/i.test(msgBody)) {
-      // await sendtrackord(from);
       sendWhatsAppText(from, 'Please type your 14 digit AWB in chat')
-    
   }
-  // else if (/buy products/i.test(msgBody)) {
-  //     await sendbuyprod(from);
-    
-  // }
-  // else if (/trace your products/i.test(msgBody)) {
-  //     await sendfarmerimpact(from);
-    
-  // }
-  
-
 
   else if (/farmer impact/i.test(msgBody)) {
       await sendfarmerimpact(from);
@@ -1740,6 +1751,8 @@ else if (/\b\d{14}\b/.test(msgBody)) {
       }
       phoneKeySession.amount = totalAmount; // in paise
       orderSessions[from] = phoneKeySession;
+
+      console.log(`🛒 Cart received from ${from} - Items: ${phoneKeySession.productItems.length}, Total: ₹${(totalAmount/100).toFixed(2)}`);
 
       // Send Flow for delivery info
       await sendWhatsAppFlow(from, FLOW_ID);
@@ -1800,18 +1813,81 @@ Question: "${msgBody}"
     console.error("Handler error:", err.response?.data || err);
   }
   try {
-    if (useInteractiveMessage && buttons.length > 0) {
-      await sendWhatsAppInteractiveMessage(from, replyText, buttons);
-      console.log(`Sent interactive message to ${from} with ${buttons.length} buttons:`, buttons.map(b => b.title));
-    } else {
-      await sendWhatsAppText(from, replyText);
-      console.log(`Replied to ${from}: "${replyText.substring(0, 100)}..."`);
+    if (replyText && replyText.trim()) {
+      if (useInteractiveMessage && buttons.length > 0) {
+        await sendWhatsAppInteractiveMessage(from, replyText, buttons);
+        console.log(`📤 Interactive message sent to ${from} with ${buttons.length} buttons`);
+      } else {
+        await sendWhatsAppText(from, replyText);
+      }
     }
   } catch (err) {
-    console.error('Error sending message:', err.response?.data || err.message);
+    console.error('❌ Error sending message:', err.response?.data || err.message);
   }
 
   res.sendStatus(200);
+});
+
+// ---------------- Delhivery Webhook Endpoint ----------------
+app.post('/delhivery-webhook', async (req, res) => {
+  try {
+    const webhookData = req.body;
+    console.log('Delhivery webhook received:', JSON.stringify(webhookData, null, 2));
+
+    // Extract data from webhook payload
+    const awb = webhookData.waybill || webhookData.awb || webhookData.tracking_id;
+    const status = (webhookData.status || webhookData.Status || '').toLowerCase();
+    const customerPhone = webhookData.consignee_phone || webhookData.phone;
+    const customerName = webhookData.consignee_name || webhookData.name || 'Customer';
+
+    if (!awb) {
+      console.warn('Delhivery webhook: Missing AWB/waybill');
+      return res.status(400).json({ error: 'Missing AWB/waybill' });
+    }
+
+    if (!customerPhone) {
+      console.warn('Delhivery webhook: Missing customer phone number');
+      return res.status(400).json({ error: 'Missing customer phone' });
+    }
+
+    const normalizedPhone = normalizePhone(customerPhone);
+
+    // Map Delhivery statuses to customer-friendly messages
+    let messageText = '';
+    let shouldSendUpdate = false;
+
+    if (status.includes('manifest') || status.includes('pending')) {
+      messageText = `Hello ${customerName}! 📦\n\nYour order has been manifested and is being prepared for shipment.\n\nYou can track your order using the link below:`;
+      shouldSendUpdate = true;
+    } else if (status.includes('in transit') || status.includes('intransit') || status.includes('in_transit')) {
+      messageText = `Hello ${customerName}! 🚚\n\nGood news! Your order is now in transit and on its way to you.\n\nTrack your shipment here:`;
+      shouldSendUpdate = true;
+    } else if (status.includes('out for delivery') || status.includes('out_for_delivery') || status.includes('dispatched')) {
+      messageText = `Hello ${customerName}! 🛵\n\nExciting news! Your order is out for delivery and will reach you soon today.\n\nTrack your delivery here:`;
+      shouldSendUpdate = true;
+    } else if (status.includes('delivered')) {
+      messageText = `Hello ${customerName}! ✅\n\nYour order has been successfully delivered!\n\nThank you for choosing OrangUtan Organics. We hope you enjoy your Himalayan products! 🌱\n\nView delivery details:`;
+      shouldSendUpdate = true;
+    } else {
+      console.log(`Delhivery webhook: Unhandled status "${status}" for AWB ${awb}`);
+    }
+
+    // Send WhatsApp message with tracking link
+    if (shouldSendUpdate) {
+      // First send the text message
+      await sendWhatsAppText(normalizedPhone, messageText);
+
+      // Then send the tracking CTA button
+      await sendWhatsAppTrackingCTA(normalizedPhone, awb);
+
+      console.log(`✅ Sent Delhivery status update to ${normalizedPhone} for AWB ${awb} (Status: ${status})`);
+    }
+
+    res.status(200).json({ success: true, message: 'Webhook processed' });
+  } catch (error) {
+    console.error('Delhivery webhook error:', error.response?.data || error.message || error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // ---------------- A generic payments webhook endpoint (you must configure your BSP/payment gateway to POST here) ----------------
@@ -1832,14 +1908,10 @@ app.post('/payments-webhook', async (req, res) => {
   const status = event?.toLowerCase() || '';
 
   if (!referenceId) {
-    console.warn('payments-webhook: could not find reference id in provider payload', body);
-    // return res.sendStatus(400);
+    console.warn('⚠️ Payments webhook: Could not find reference ID in payload');
   }
 
-  console.log('payments-webhook receive:', referenceId, status);
-
-  // const session = orderSessions[referenceId] || null;
-
+  console.log(`💳 Payment webhook - Reference ID: ${referenceId}, Status: ${status}`);
 
   let session = null;
   if (referenceId && orderSessions[referenceId]) {
@@ -1863,13 +1935,15 @@ app.post('/payments-webhook', async (req, res) => {
   }
 
   if (status.includes('paid')) {
+    console.log(`✅ Payment successful - Order: ${session.orderId}`);
     try {
       await finalizePaidOrder(session, body);
     } catch (err) {
-      console.error('finalizePaidOrder error', err);
+      console.error('❌ Error finalizing paid order:', err);
     }
   } else if (status.includes('failed') || status.includes('cancel') || status.includes('expired')) {
     session.payment_status = 'failed';
+    console.log(`❌ Payment ${status} - Order: ${session.orderId}`);
     await sendWhatsAppText(session.phone, "⚠️ Your payment failed or expired. Please try placing the order again.");
   }
 
