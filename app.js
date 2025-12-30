@@ -1096,17 +1096,17 @@ async function sendWhatsAppOrderDetails(to, session) {
     // Prefer item.item_price if present (likely in catalog order payload), assume rupees -> convert to paise
     const unitPricePaise = Math.round((parseFloat(it.item_price || it.price || 0) || 0) * 100) || 0;
     const qty = parseInt(it.quantity || it.qty || it.quantity_ordered || 1, 10) || 1;
-    const amountValue = unitPricePaise || Math.round((session.amount || 0) / Math.max(1, (session.productItems || []).length));
     return {
       retailer_id,
       name,
-      amount: { value: amountValue, offset: 100 },
+      amount: { value: unitPricePaise, offset: 100 },
       quantity: qty
     };
   });
 
-  // total amount (paise) is session.amount (we keep this convention)
-  const prod_cost = session.amount || items.reduce((s, it) => s + (it.amount?.value || 0) * (it.quantity || 1), 0);
+  // Calculate subtotal BEFORE discount (sum of all items)
+  // This is what WhatsApp expects as subtotal
+  const prod_cost = items.reduce((s, it) => s + (it.amount?.value || 0) * (it.quantity || 1), 0);
   let shippingChargePaise = 0;
   const product_data = session.productItems || [];
    let total_wgt = 0;
@@ -1141,15 +1141,12 @@ async function sendWhatsAppOrderDetails(to, session) {
 
     session.shipping_charge = shippingChargePaise;
 
-
-    const totalAmountValue = prod_cost+shippingChargePaise
-  
-
-
-
-
   // Prepare discount for order details
   const discountValue = session.discount || 0;
+
+  // Calculate total: subtotal - discount + shipping
+  // prod_cost is the original subtotal before discount
+  const totalAmountValue = prod_cost - discountValue + shippingChargePaise;
   let bodyText = "Please review your order and complete the payment. NOTE: shipment cost is included";
   if (discountValue > 0) {
     bodyText = `🎊 NEW YEAR SALE: 10% discount applied!\n\n${bodyText}`;
@@ -1177,7 +1174,11 @@ async function sendWhatsAppOrderDetails(to, session) {
             status: "pending",
             items,
             subtotal: { value: prod_cost, offset: 100 },
-            discount: { value: discountValue, offset: 100 },
+            discount: {
+              value: discountValue,
+              offset: 100,
+              description: "🎊 New Year Sale (10% off)"
+            },
             tax: { value: 0, offset: 100 },
             shipping: { value: Math.round((session.shipping_charge || 0)), offset: 100 }
           }
@@ -1441,7 +1442,8 @@ if (!completedUsers.has(from)) {
       customer: customerData,
       step: 4,
       productItems: (orderSessions[from]?.productItems) || [],
-      amount: (orderSessions[from]?.amount) || 0
+      amount: (orderSessions[from]?.amount) || 0,
+      discount: (orderSessions[from]?.discount) || 0 // Transfer discount from cart
     };
     orderSessions[orderId] = session;
     phoneToOrderIds[from].push(orderId);
