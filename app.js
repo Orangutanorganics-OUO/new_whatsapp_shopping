@@ -743,7 +743,8 @@ async function sendWhatsAppList(to) {
           text: "Namaste from Orang Utan Organics 🌱",
         },
         body: {
-          text: `Perched at 2,300 mtr in the Gangotri Valley, we are here to share the true taste of the Himalayas. \nHow can we brighten your day?`,
+          text: `Perched at 2,300 mtr in the Gangotri Valley, we are here to share the true taste of the Himalayas. \nAdd 2 or more items to your cart and enjoy 10% off this week.
+\nHow can we brighten your day?`,
         },
         action: {
           button: "Options",
@@ -1147,6 +1148,13 @@ async function sendWhatsAppOrderDetails(to, session) {
 
 
 
+  // Prepare discount for order details
+  const discountValue = session.discount || 0;
+  let bodyText = "Please review your order and complete the payment. NOTE: shipment cost is included";
+  if (discountValue > 0) {
+    bodyText = `🎊 NEW YEAR SALE: 10% discount applied!\n\n${bodyText}`;
+  }
+
   const payload = {
     messaging_product: "whatsapp",
     to,
@@ -1154,7 +1162,7 @@ async function sendWhatsAppOrderDetails(to, session) {
     interactive: {
       type: "order_details",
       header: { type: "text", text: `Order ${session.orderId}` },
-      body: { text: "Please review your order and complete the payment. NOTE: shipment cost is included" },
+      body: { text: bodyText },
       footer: { text: "OrangUtan Organics" },
       action: {
         name: "review_and_pay",
@@ -1169,6 +1177,7 @@ async function sendWhatsAppOrderDetails(to, session) {
             status: "pending",
             items,
             subtotal: { value: prod_cost, offset: 100 },
+            discount: { value: discountValue, offset: 100 },
             tax: { value: 0, offset: 100 },
             shipping: { value: Math.round((session.shipping_charge || 0)), offset: 100 }
           }
@@ -1291,7 +1300,8 @@ async function finalizePaidOrder(session, paymentInfo = {}) {
         (session.shipping_charge / 100).toFixed(2),
         '0.00',
         JSON.stringify(delhiveryResp || {}),
-        session.orderId || ''
+        session.orderId || '',
+        session.discount ? (session.discount / 100).toFixed(2) : '0.00' // NEW YEAR SALE discount
       ];
       await appendToSheet(row);
     } catch (err) {
@@ -1437,7 +1447,13 @@ if (!completedUsers.has(from)) {
     phoneToOrderIds[from].push(orderId);
 
     console.log(`📦 Order created - ID: ${orderId}, Customer: ${from}`);
-    await sendWhatsAppText(from, `Thanks! We've received your delivery details. (OrderId: ${orderId})`);
+
+    // Include discount info in confirmation message
+    let confirmMsg = `Thanks! We've received your delivery details. (OrderId: ${orderId})`;
+    if (session.discount && session.discount > 0) {
+      confirmMsg += `\n🎊 NEW YEAR SALE: 10% discount applied - You saved ₹${(session.discount/100).toFixed(2)}!`;
+    }
+    await sendWhatsAppText(from, confirmMsg);
 
     session.amount = session.amount || 0; // paise
     const paymentMode = (customerData.payment_mode || '').toLowerCase();
@@ -1546,14 +1562,22 @@ if (!completedUsers.has(from)) {
                 (session.amount / 100).toFixed(2), // amount in rupees
                 (session.shipping_charge / 100).toFixed(2),
                 (codChargePaise / 100).toFixed(2),
-                JSON.stringify(delhiveryResp || {})
+                JSON.stringify(delhiveryResp || {}),
+                session.orderId || '',
+                session.discount ? (session.discount / 100).toFixed(2) : '0.00' // NEW YEAR SALE discount
               ];
               await appendToSheet(row);
             } catch (err) {
               console.error('Failed to append COD order to sheet', err);
             }
       
-            await sendWhatsAppText(from, `✅ Your COD order is placed. Total: ₹${(session.amount/100).toFixed(2)}. We'll notify you when it's shipped.`);
+            let codConfirmMsg = `✅ Your COD order is placed. Total: ₹${(session.amount/100).toFixed(2)}.`;
+            if (session.discount && session.discount > 0) {
+              codConfirmMsg += `\n🎊 You saved ₹${(session.discount/100).toFixed(2)} with our NEW YEAR SALE!`;
+            }
+            codConfirmMsg += `\n\nWe'll notify you when it's shipped.`;
+
+            await sendWhatsAppText(from, codConfirmMsg);
             console.log(`✅ COD order completed - Order: ${session.orderId}`);
             }
             else{
@@ -1595,7 +1619,8 @@ if (!completedUsers.has(from)) {
             '', // shipping charge unknown yet
             '', // cod amount
             `whatsapp_payment_config:${PAYMENT_CONFIGURATION_NAME}`,
-            session.orderId
+            session.orderId,
+            session.discount ? (session.discount / 100).toFixed(2) : '0.00' // NEW YEAR SALE discount
           ];
           await appendToSheet(row);
         } catch (err) {
@@ -1744,19 +1769,37 @@ else if (/\b\d{14}\b/.test(msgBody)) {
       phoneKeySession.productItems = msg.order?.product_items || [];
 
       let totalAmount = 0;
+      let totalQuantity = 0;
       for (const item of phoneKeySession.productItems) {
         const priceRupees = parseFloat(item.item_price) || 0;
         const qty = parseInt(item.quantity, 10) || 1;
         totalAmount += priceRupees * 100 * qty;
+        totalQuantity += qty;
       }
-      phoneKeySession.amount = totalAmount; // in paise
+
+      // NEW YEAR SALE: 10% discount if total quantity > 1
+      let discount = 0;
+      if (totalQuantity > 1) {
+        discount = Math.round(totalAmount * 0.10); // 10% discount in paise
+        totalAmount = totalAmount - discount;
+        phoneKeySession.discount = discount;
+        console.log(`🎉 NEW YEAR SALE: 10% discount applied - ₹${(discount/100).toFixed(2)}`);
+      }
+
+      phoneKeySession.amount = totalAmount; // in paise (after discount)
+      phoneKeySession.originalAmount = totalAmount + discount; // original amount before discount
       orderSessions[from] = phoneKeySession;
 
-      console.log(`🛒 Cart received from ${from} - Items: ${phoneKeySession.productItems.length}, Total: ₹${(totalAmount/100).toFixed(2)}`);
+      console.log(`🛒 Cart received from ${from} - Items: ${phoneKeySession.productItems.length}, Total Qty: ${totalQuantity}, Final: ₹${(totalAmount/100).toFixed(2)}`);
 
       // Send Flow for delivery info
       await sendWhatsAppFlow(from, FLOW_ID);
-      await sendWhatsAppText(from, "Please tap the button above and provide your delivery details.");
+
+      if (totalQuantity > 1) {
+        await sendWhatsAppText(from, `🎊 NEW YEAR SALE! You've received 10% discount on your order!\n\nPlease tap the button above and provide your delivery details.`);
+      } else {
+        await sendWhatsAppText(from, "Please tap the button above and provide your delivery details.");
+      }
     } else if (remindedUsers.has(from) && !completedUsers.has(from)) {
   const emailMatch = msgBody.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
   const words = msgBody.split(/\s+/);
