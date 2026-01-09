@@ -70,6 +70,10 @@ const {
 } = process.env;
 const phoneNumberId = process.env.PHONE_NUMBER_ID;
 
+// WhatsApp Orders - Google Apps Script URL (for emails & sheets)
+// Replace with your deployed Apps Script Web App URL
+const WHATSAPP_SHEETS_URL = 'https://script.google.com/macros/s/AKfycbwNl6OlO7WKYmFWqLBVrCQnsZdpXU9GljSUyegE0cxnnxXlgvH0ctI5_Sr6TAAMuWI6/exec'; // e.g., 'https://script.google.com/macros/s/AKfycbxxx...xxx/exec'
+
 
 let pdfText = '';
 let intentBasedQA = new Map(); // Store Q&A with intents separately
@@ -743,8 +747,7 @@ async function sendWhatsAppList(to) {
           text: "Namaste from Orang Utan Organics 🌱",
         },
         body: {
-          text: `Perched at 2,300 mtr in the Gangotri Valley, we are here to share the true taste of the Himalayas. \nAdd 2 or more items to your cart and enjoy 10% off this week.
-\nHow can we brighten your day?`,
+          text: `Perched at 2,300 mtr in the Gangotri Valley, we are here to share the true taste of the Himalayas. \nHow can we brighten your day?`,
         },
         action: {
           button: "Options",
@@ -1017,6 +1020,41 @@ function getSheetsClient() {
 }
 
 async function appendToSheet(rowValues) {
+  // Use Google Apps Script Web App for WhatsApp orders (sends emails automatically)
+  if (WHATSAPP_SHEETS_URL && WHATSAPP_SHEETS_URL !== 'YOUR_APPS_SCRIPT_URL_HERE') {
+    try {
+      // rowValues format: [timestamp, name, phone, email, address, pincode, products, paymentMode, paymentStatus, amount, shipping, codCharge, delhiveryResponse, orderId, discount]
+      const orderData = {
+        type: 'whatsapp_order',
+        timestamp: rowValues[0] || new Date().toISOString(),
+        name: rowValues[1] || '',
+        phone: rowValues[2] || '',
+        email: rowValues[3] || '',
+        address: rowValues[4] || '',
+        pincode: rowValues[5] || '',
+        products: rowValues[6] || '[]', // JSON string
+        paymentMode: rowValues[7] || '',
+        paymentStatus: rowValues[8] || '',
+        amount: rowValues[9] || '0',
+        shippingCharge: rowValues[10] || '0',
+        codCharge: rowValues[11] || '0',
+        delhiveryResponse: rowValues[12] || '',
+        orderId: rowValues[13] || '',
+        discount: rowValues[14] || '0'
+      };
+
+      const res = await axios.post(WHATSAPP_SHEETS_URL, orderData, {
+        headers: { 'Content-Type': 'application/json' }
+      });
+      console.log('✅ Order sent to Google Sheets & emails sent');
+      return res.data;
+    } catch (err) {
+      console.error('❌ appendToSheet error (Google Apps Script):', err.response?.data || err.message || err);
+      throw err;
+    }
+  }
+
+  // Fallback to Google Sheets API if GOOGLE_SHEETS_URL is not set
   const sheets = getSheetsClient();
   if (!sheets || !SHEET_ID) return null;
   try {
@@ -1035,6 +1073,30 @@ async function appendToSheet(rowValues) {
 }
 
 async function appendCustomerToSheet(rowValues) {
+  // Use Google Apps Script Web App for WhatsApp customer data
+  if (WHATSAPP_SHEETS_URL && WHATSAPP_SHEETS_URL !== 'YOUR_APPS_SCRIPT_URL_HERE') {
+    try {
+      // rowValues format: [timestamp, name, email, phone]
+      const customerData = {
+        type: 'customer',
+        timestamp: rowValues[0] || new Date().toISOString(),
+        name: rowValues[1] || '',
+        email: rowValues[2] || '',
+        phone: rowValues[3] || ''
+      };
+
+      const res = await axios.post(WHATSAPP_SHEETS_URL, customerData, {
+        headers: { 'Content-Type': 'application/json' }
+      });
+      console.log('✅ Customer data sent to Google Sheets');
+      return res.data;
+    } catch (err) {
+      console.error('❌ appendCustomerToSheet error (Google Apps Script):', err.response?.data || err.message || err);
+      throw err;
+    }
+  }
+
+  // Fallback to Google Sheets API if GOOGLE_SHEETS_URL is not set
   const sheets = getSheetsClient();
   if (!sheets || !SHEET_ID) return null;
   try {
@@ -1096,17 +1158,17 @@ async function sendWhatsAppOrderDetails(to, session) {
     // Prefer item.item_price if present (likely in catalog order payload), assume rupees -> convert to paise
     const unitPricePaise = Math.round((parseFloat(it.item_price || it.price || 0) || 0) * 100) || 0;
     const qty = parseInt(it.quantity || it.qty || it.quantity_ordered || 1, 10) || 1;
+    const amountValue = unitPricePaise || Math.round((session.amount || 0) / Math.max(1, (session.productItems || []).length));
     return {
       retailer_id,
       name,
-      amount: { value: unitPricePaise, offset: 100 },
+      amount: { value: amountValue, offset: 100 },
       quantity: qty
     };
   });
 
-  // Calculate subtotal BEFORE discount (sum of all items)
-  // This is what WhatsApp expects as subtotal
-  const prod_cost = items.reduce((s, it) => s + (it.amount?.value || 0) * (it.quantity || 1), 0);
+  // total amount (paise) is session.amount (we keep this convention)
+  const prod_cost = session.amount || items.reduce((s, it) => s + (it.amount?.value || 0) * (it.quantity || 1), 0);
   let shippingChargePaise = 0;
   const product_data = session.productItems || [];
    let total_wgt = 0;
@@ -1141,16 +1203,12 @@ async function sendWhatsAppOrderDetails(to, session) {
 
     session.shipping_charge = shippingChargePaise;
 
-  // Prepare discount for order details
-  const discountValue = session.discount || 0;
 
-  // Calculate total: subtotal - discount + shipping
-  // prod_cost is the original subtotal before discount
-  const totalAmountValue = prod_cost - discountValue + shippingChargePaise;
-  let bodyText = "Please review your order and complete the payment. NOTE: shipment cost is included";
-  if (discountValue > 0) {
-    bodyText = `🎊 NEW YEAR SALE: 10% discount applied!\n\n${bodyText}`;
-  }
+    const totalAmountValue = prod_cost+shippingChargePaise
+  
+
+
+
 
   const payload = {
     messaging_product: "whatsapp",
@@ -1159,7 +1217,7 @@ async function sendWhatsAppOrderDetails(to, session) {
     interactive: {
       type: "order_details",
       header: { type: "text", text: `Order ${session.orderId}` },
-      body: { text: bodyText },
+      body: { text: "Please review your order and complete the payment. NOTE: shipment cost is included" },
       footer: { text: "OrangUtan Organics" },
       action: {
         name: "review_and_pay",
@@ -1174,11 +1232,6 @@ async function sendWhatsAppOrderDetails(to, session) {
             status: "pending",
             items,
             subtotal: { value: prod_cost, offset: 100 },
-            discount: {
-              value: discountValue,
-              offset: 100,
-              description: "🎊 New Year Sale (10% off)"
-            },
             tax: { value: 0, offset: 100 },
             shipping: { value: Math.round((session.shipping_charge || 0)), offset: 100 }
           }
@@ -1301,8 +1354,7 @@ async function finalizePaidOrder(session, paymentInfo = {}) {
         (session.shipping_charge / 100).toFixed(2),
         '0.00',
         JSON.stringify(delhiveryResp || {}),
-        session.orderId || '',
-        session.discount ? (session.discount / 100).toFixed(2) : '0.00' // NEW YEAR SALE discount
+        session.orderId || ''
       ];
       await appendToSheet(row);
     } catch (err) {
@@ -1442,20 +1494,13 @@ if (!completedUsers.has(from)) {
       customer: customerData,
       step: 4,
       productItems: (orderSessions[from]?.productItems) || [],
-      amount: (orderSessions[from]?.amount) || 0,
-      discount: (orderSessions[from]?.discount) || 0 // Transfer discount from cart
+      amount: (orderSessions[from]?.amount) || 0
     };
     orderSessions[orderId] = session;
     phoneToOrderIds[from].push(orderId);
 
     console.log(`📦 Order created - ID: ${orderId}, Customer: ${from}`);
-
-    // Include discount info in confirmation message
-    let confirmMsg = `Thanks! We've received your delivery details. (OrderId: ${orderId})`;
-    if (session.discount && session.discount > 0) {
-      confirmMsg += `\n🎊 NEW YEAR SALE: 10% discount applied - You saved ₹${(session.discount/100).toFixed(2)}!`;
-    }
-    await sendWhatsAppText(from, confirmMsg);
+    await sendWhatsAppText(from, `Thanks! We've received your delivery details. (OrderId: ${orderId})`);
 
     session.amount = session.amount || 0; // paise
     const paymentMode = (customerData.payment_mode || '').toLowerCase();
@@ -1564,22 +1609,14 @@ if (!completedUsers.has(from)) {
                 (session.amount / 100).toFixed(2), // amount in rupees
                 (session.shipping_charge / 100).toFixed(2),
                 (codChargePaise / 100).toFixed(2),
-                JSON.stringify(delhiveryResp || {}),
-                session.orderId || '',
-                session.discount ? (session.discount / 100).toFixed(2) : '0.00' // NEW YEAR SALE discount
+                JSON.stringify(delhiveryResp || {})
               ];
               await appendToSheet(row);
             } catch (err) {
               console.error('Failed to append COD order to sheet', err);
             }
       
-            let codConfirmMsg = `✅ Your COD order is placed. Total: ₹${(session.amount/100).toFixed(2)}.`;
-            if (session.discount && session.discount > 0) {
-              codConfirmMsg += `\n🎊 You saved ₹${(session.discount/100).toFixed(2)} with our NEW YEAR SALE!`;
-            }
-            codConfirmMsg += `\n\nWe'll notify you when it's shipped.`;
-
-            await sendWhatsAppText(from, codConfirmMsg);
+            await sendWhatsAppText(from, `✅ Your COD order is placed. Total: ₹${(session.amount/100).toFixed(2)}. We'll notify you when it's shipped.`);
             console.log(`✅ COD order completed - Order: ${session.orderId}`);
             }
             else{
@@ -1621,8 +1658,7 @@ if (!completedUsers.has(from)) {
             '', // shipping charge unknown yet
             '', // cod amount
             `whatsapp_payment_config:${PAYMENT_CONFIGURATION_NAME}`,
-            session.orderId,
-            session.discount ? (session.discount / 100).toFixed(2) : '0.00' // NEW YEAR SALE discount
+            session.orderId
           ];
           await appendToSheet(row);
         } catch (err) {
@@ -1771,37 +1807,19 @@ else if (/\b\d{14}\b/.test(msgBody)) {
       phoneKeySession.productItems = msg.order?.product_items || [];
 
       let totalAmount = 0;
-      let totalQuantity = 0;
       for (const item of phoneKeySession.productItems) {
         const priceRupees = parseFloat(item.item_price) || 0;
         const qty = parseInt(item.quantity, 10) || 1;
         totalAmount += priceRupees * 100 * qty;
-        totalQuantity += qty;
       }
-
-      // NEW YEAR SALE: 10% discount if total quantity > 1
-      let discount = 0;
-      if (totalQuantity > 1) {
-        discount = Math.round(totalAmount * 0.10); // 10% discount in paise
-        totalAmount = totalAmount - discount;
-        phoneKeySession.discount = discount;
-        console.log(`🎉 NEW YEAR SALE: 10% discount applied - ₹${(discount/100).toFixed(2)}`);
-      }
-
-      phoneKeySession.amount = totalAmount; // in paise (after discount)
-      phoneKeySession.originalAmount = totalAmount + discount; // original amount before discount
+      phoneKeySession.amount = totalAmount; // in paise
       orderSessions[from] = phoneKeySession;
 
-      console.log(`🛒 Cart received from ${from} - Items: ${phoneKeySession.productItems.length}, Total Qty: ${totalQuantity}, Final: ₹${(totalAmount/100).toFixed(2)}`);
+      console.log(`🛒 Cart received from ${from} - Items: ${phoneKeySession.productItems.length}, Total: ₹${(totalAmount/100).toFixed(2)}`);
 
       // Send Flow for delivery info
       await sendWhatsAppFlow(from, FLOW_ID);
-
-      if (totalQuantity > 1) {
-        await sendWhatsAppText(from, `🎊 NEW YEAR SALE! You've received 10% discount on your order!\n\nPlease tap the button above and provide your delivery details.`);
-      } else {
-        await sendWhatsAppText(from, "Please tap the button above and provide your delivery details.");
-      }
+      await sendWhatsAppText(from, "Please tap the button above and provide your delivery details.");
     } else if (remindedUsers.has(from) && !completedUsers.has(from)) {
   const emailMatch = msgBody.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
   const words = msgBody.split(/\s+/);
