@@ -2,7 +2,6 @@
 import 'dotenv/config';
 import express from 'express';
 import axios from 'axios';
-import { google } from 'googleapis';
 import ShortUniqueId from 'short-unique-id';
 import { extractTextFromPDF } from './pdf_reader.js'
 import { askGemini } from './gemini.js'
@@ -62,13 +61,13 @@ const {
   DELHIVERY_ORIGIN_PIN = '110042',
   DELHIVERY_CHARGES_URL = 'https://track.delhivery.com/api/kinko/v1/invoice/charges/.json',
   DELHIVERY_CREATE_URL = 'https://track.delhivery.com/api/cmu/create.json',
-  SHEET_ID,
 
   // Optional: provider/BSP-based payment lookup (set this if your BSP provides a REST lookup)
   PAYMENTS_LOOKUP_BASE_URL,
   PAYMENTS_LOOKUP_API_KEY
 } = process.env;
 const phoneNumberId = process.env.PHONE_NUMBER_ID;
+const APP_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz7dTbseyukGtC0-Rwzny5001bAGYfxRFsv8oSyEs0B_z9BjdtvMGZsUClks7N82LoBPw/exec"
 
 
 let pdfText = '';
@@ -1002,51 +1001,52 @@ async function sendWhatsAppFlow(to, flowId, flowToken = null) {
   }
 }
 
-// --- Google Sheets (keep as before) ---
-let sheetsClient = null;
-function getSheetsClient() {
-  if (sheetsClient) return sheetsClient;
-  const auth = new google.auth.GoogleAuth({
-    // Note: this sample uses keyFile; if you prefer passing the key via env - change accordingly
-    keyFile: "cred.json",
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-  sheetsClient = google.sheets({ version: "v4", auth });
-  return sheetsClient;
-}
-
-async function appendToSheet(rowValues) {
-  const sheets = getSheetsClient();
-  if (!sheets || !SHEET_ID) return null;
-  try {
-    const res = await sheets.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
-      range: 'Sheet1!A1',
-      valueInputOption: 'RAW',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: { values: [rowValues] }
-    });
-    return res.data;
-  } catch (err) {
-    console.error('appendToSheet error', err.response?.data || err.message || err);
-    throw err;
+// --- App Script Integration ---
+async function sendOrderToAppScript(orderData) {
+  if (!APP_SCRIPT_URL) {
+    console.warn('APP_SCRIPT_URL not configured. Skipping order submission to Google Sheets.');
+    return null;
   }
-}
 
-async function appendCustomerToSheet(rowValues) {
-  const sheets = getSheetsClient();
-  if (!sheets || !SHEET_ID) return null;
   try {
-    const res = await sheets.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
-      range: 'Sheet2!A1',   // 👈 write to Sheet2
-      valueInputOption: 'RAW',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: { values: [rowValues] }
+    // Format products for App Script
+    const products = orderData.productItems.map(item => ({
+      name: getProductName[item.product_retailer_id] || item.name || 'Item',
+      size: `${getProductWeight[item.product_retailer_id] || 0}gm`,
+      quantity: parseInt(item.quantity, 10) || 1,
+      price: parseFloat(item.item_price || item.price || 0)
+    }));
+
+    const payload = {
+      type: 'checkout',
+      orderId: orderData.orderId || '',
+      timestamp: orderData.timestamp || new Date().toISOString(),
+      name: orderData.name || '',
+      email: orderData.email || '',
+      phone: orderData.phone || '',
+      address: orderData.address || '',
+      pincode: orderData.pincode || '',
+      city: orderData.city || '',
+      state: orderData.state || '',
+      products: products,
+      paymentMode: orderData.paymentMode || '',
+      paymentStatus: orderData.paymentStatus || '',
+      paymentId: orderData.paymentId || '',
+      subtotal: parseFloat(orderData.subtotal || 0),
+      shippingCharge: parseFloat(orderData.shippingCharge || 0),
+      codCharge: parseFloat(orderData.codCharge || 0),
+      total: parseFloat(orderData.total || 0),
+      delhiveryResponse: orderData.delhiveryResponse || ''
+    };
+
+    const res = await axios.post(APP_SCRIPT_URL, payload, {
+      headers: { 'Content-Type': 'application/json' }
     });
+
+    console.log(`✅ Order sent to App Script - Order ID: ${orderData.orderId}`);
     return res.data;
   } catch (err) {
-    console.error('appendCustomerToSheet error', err.response?.data || err.message || err);
+    console.error('sendOrderToAppScript error:', err.response?.data || err.message || err);
     throw err;
   }
 }
@@ -1275,27 +1275,30 @@ async function finalizePaidOrder(session, paymentInfo = {}) {
       await sendWhatsAppText(phone, `⚠️ Payment received but shipment creation failed. We'll follow up.`);
     }
 
-    // Append final row to sheet marking paid and shipment info
+    // Send order to App Script (triggers emails and sheet storage)
     try {
-      const row = [
-        new Date().toISOString(),
-        session.customer?.name || '',
-        session.customer?.phone || phone,
-        session.customer?.email || '',
-        `${session.customer?.address1 || ''} ${session.customer?.address2 || ''}`.trim(),
-        session.customer?.pincode || '',
-        JSON.stringify(session.productItems || []),
-        'Prepaid',
-        'Paid',
-        (session.amount / 100).toFixed(2),
-        (session.shipping_charge / 100).toFixed(2),
-        '0.00',
-        JSON.stringify(delhiveryResp || {}),
-        session.orderId || ''
-      ];
-      await appendToSheet(row);
+      await sendOrderToAppScript({
+        orderId: session.orderId || '',
+        timestamp: new Date().toISOString(),
+        name: session.customer?.name || '',
+        email: session.customer?.email || '',
+        phone: session.customer?.phone || phone,
+        address: `${session.customer?.address1 || ''} ${session.customer?.address2 || ''}`.trim(),
+        pincode: session.customer?.pincode || '',
+        city: session.customer?.city || '',
+        state: session.customer?.state || '',
+        productItems: session.productItems || [],
+        paymentMode: 'Prepaid',
+        paymentStatus: 'Paid',
+        paymentId: '',
+        subtotal: (session.amount / 100),
+        shippingCharge: (session.shipping_charge / 100),
+        codCharge: 0,
+        total: ((session.amount + session.shipping_charge) / 100),
+        delhiveryResponse: JSON.stringify(delhiveryResp || {})
+      });
     } catch (err) {
-      console.error('Failed to append prepaid paid order to sheet', err);
+      console.error('Failed to send prepaid paid order to App Script', err);
     }
 
   } catch (err) {
@@ -1531,26 +1534,30 @@ if (!completedUsers.has(from)) {
             console.log(`🚚 COD Shipment created for order ${session.orderId}, Amount: ₹${(session.amount/100).toFixed(2)}`);
 
             if(delhiveryResp.success && session.cod_error){
-              // Append to Google Sheet
+              // Send order to App Script (triggers emails and sheet storage)
             try {
-              const row = [
-                new Date().toISOString(),
-                customerData.name || '',
-                customerData.phone || from,
-                customerData.email || '',
-                `${customerData.address1 || ''} ${customerData.address2 || ''}`.trim(),
-                customerData.pincode || '',
-                JSON.stringify(session.productItems || []),
-                'COD',
-                'Pending', // payment status for COD
-                (session.amount / 100).toFixed(2), // amount in rupees
-                (session.shipping_charge / 100).toFixed(2),
-                (codChargePaise / 100).toFixed(2),
-                JSON.stringify(delhiveryResp || {})
-              ];
-              await appendToSheet(row);
+              await sendOrderToAppScript({
+                orderId: session.orderId || '',
+                timestamp: new Date().toISOString(),
+                name: customerData.name || '',
+                email: customerData.email || '',
+                phone: customerData.phone || from,
+                address: `${customerData.address1 || ''} ${customerData.address2 || ''}`.trim(),
+                pincode: customerData.pincode || '',
+                city: customerData.city || '',
+                state: customerData.state || '',
+                productItems: session.productItems || [],
+                paymentMode: 'COD',
+                paymentStatus: 'Pending',
+                paymentId: '',
+                subtotal: ((session.amount - codChargePaise - session.shipping_charge) / 100),
+                shippingCharge: (session.shipping_charge / 100),
+                codCharge: (codChargePaise / 100),
+                total: (session.amount / 100),
+                delhiveryResponse: JSON.stringify(delhiveryResp || {})
+              });
             } catch (err) {
-              console.error('Failed to append COD order to sheet', err);
+              console.error('Failed to send COD order to App Script', err);
             }
       
             await sendWhatsAppText(from, `✅ Your COD order is placed. Total: ₹${(session.amount/100).toFixed(2)}. We'll notify you when it's shipped.`);
@@ -1579,27 +1586,30 @@ if (!completedUsers.has(from)) {
         // optionally also send a textual confirmation
         await sendWhatsAppText(from, `💳 Please tap *Review and Pay* inside the order card above to complete payment. OrderId: ${session.orderId}`);
 
-        // Append preliminary row to sheet (awaiting payment)
+        // Send preliminary order to App Script (awaiting payment) - triggers emails
         try {
-          const row = [
-            new Date().toISOString(),
-            customerData.name || '',
-            customerData.phone || from,
-            customerData.email || '',
-            `${customerData.address1 || ''} ${customerData.address2 || ''}`.trim(),
-            customerData.pincode || '',
-            JSON.stringify(session.productItems || []),
-            'Prepaid',
-            'Awaiting Payment',
-            (session.amount / 100).toFixed(2),
-            '', // shipping charge unknown yet
-            '', // cod amount
-            `whatsapp_payment_config:${PAYMENT_CONFIGURATION_NAME}`,
-            session.orderId
-          ];
-          await appendToSheet(row);
+          await sendOrderToAppScript({
+            orderId: session.orderId || '',
+            timestamp: new Date().toISOString(),
+            name: customerData.name || '',
+            email: customerData.email || '',
+            phone: customerData.phone || from,
+            address: `${customerData.address1 || ''} ${customerData.address2 || ''}`.trim(),
+            pincode: customerData.pincode || '',
+            city: customerData.city || '',
+            state: customerData.state || '',
+            productItems: session.productItems || [],
+            paymentMode: 'Prepaid',
+            paymentStatus: 'Awaiting Payment',
+            paymentId: '',
+            subtotal: (session.amount / 100),
+            shippingCharge: 0,
+            codCharge: 0,
+            total: (session.amount / 100),
+            delhiveryResponse: `whatsapp_payment_config:${PAYMENT_CONFIGURATION_NAME}`
+          });
         } catch (err) {
-          console.error('Failed to append awaiting payment row to sheet', err);
+          console.error('Failed to send awaiting payment order to App Script', err);
         }
 
       } catch (err) {
@@ -1776,15 +1786,10 @@ else if (/\b\d{14}\b/.test(msgBody)) {
     remindedUsers.delete(from);
     completedUsers.add(from); // ✅ mark as done
 
-    await appendCustomerToSheet([
-      new Date().toISOString(),
-      name,
-      email,
-      from
-    ]);
+    // Note: Customer contact collection (non-order) removed - can be handled separately if needed
 
     await sendWhatsAppText(from, `✅ Thanks ${name}! We've saved your details.`);
-    console.log(`💾 Saved contact for ${from}: ${name}, ${email}`);
+    console.log(`💾 Contact info received from ${from}: ${name}, ${email}`);
   }
 }
     
