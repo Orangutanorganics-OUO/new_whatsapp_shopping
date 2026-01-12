@@ -70,10 +70,6 @@ const {
 } = process.env;
 const phoneNumberId = process.env.PHONE_NUMBER_ID;
 
-// WhatsApp Orders - Google Apps Script URL (for emails & sheets)
-// Replace with your deployed Apps Script Web App URL
-const WHATSAPP_SHEETS_URL = 'https://script.google.com/macros/s/AKfycbwNl6OlO7WKYmFWqLBVrCQnsZdpXU9GljSUyegE0cxnnxXlgvH0ctI5_Sr6TAAMuWI6/exec'; // e.g., 'https://script.google.com/macros/s/AKfycbxxx...xxx/exec'
-
 
 let pdfText = '';
 let intentBasedQA = new Map(); // Store Q&A with intents separately
@@ -1020,41 +1016,6 @@ function getSheetsClient() {
 }
 
 async function appendToSheet(rowValues) {
-  // Use Google Apps Script Web App for WhatsApp orders (sends emails automatically)
-  if (WHATSAPP_SHEETS_URL && WHATSAPP_SHEETS_URL !== 'YOUR_APPS_SCRIPT_URL_HERE') {
-    try {
-      // rowValues format: [timestamp, name, phone, email, address, pincode, products, paymentMode, paymentStatus, amount, shipping, codCharge, delhiveryResponse, orderId, discount]
-      const orderData = {
-        type: 'whatsapp_order',
-        timestamp: rowValues[0] || new Date().toISOString(),
-        name: rowValues[1] || '',
-        phone: rowValues[2] || '',
-        email: rowValues[3] || '',
-        address: rowValues[4] || '',
-        pincode: rowValues[5] || '',
-        products: rowValues[6] || '[]', // JSON string
-        paymentMode: rowValues[7] || '',
-        paymentStatus: rowValues[8] || '',
-        amount: rowValues[9] || '0',
-        shippingCharge: rowValues[10] || '0',
-        codCharge: rowValues[11] || '0',
-        delhiveryResponse: rowValues[12] || '',
-        orderId: rowValues[13] || '',
-        discount: rowValues[14] || '0'
-      };
-
-      const res = await axios.post(WHATSAPP_SHEETS_URL, orderData, {
-        headers: { 'Content-Type': 'application/json' }
-      });
-      console.log('✅ Order sent to Google Sheets & emails sent');
-      return res.data;
-    } catch (err) {
-      console.error('❌ appendToSheet error (Google Apps Script):', err.response?.data || err.message || err);
-      throw err;
-    }
-  }
-
-  // Fallback to Google Sheets API if GOOGLE_SHEETS_URL is not set
   const sheets = getSheetsClient();
   if (!sheets || !SHEET_ID) return null;
   try {
@@ -1073,30 +1034,6 @@ async function appendToSheet(rowValues) {
 }
 
 async function appendCustomerToSheet(rowValues) {
-  // Use Google Apps Script Web App for WhatsApp customer data
-  if (WHATSAPP_SHEETS_URL && WHATSAPP_SHEETS_URL !== 'YOUR_APPS_SCRIPT_URL_HERE') {
-    try {
-      // rowValues format: [timestamp, name, email, phone]
-      const customerData = {
-        type: 'customer',
-        timestamp: rowValues[0] || new Date().toISOString(),
-        name: rowValues[1] || '',
-        email: rowValues[2] || '',
-        phone: rowValues[3] || ''
-      };
-
-      const res = await axios.post(WHATSAPP_SHEETS_URL, customerData, {
-        headers: { 'Content-Type': 'application/json' }
-      });
-      console.log('✅ Customer data sent to Google Sheets');
-      return res.data;
-    } catch (err) {
-      console.error('❌ appendCustomerToSheet error (Google Apps Script):', err.response?.data || err.message || err);
-      throw err;
-    }
-  }
-
-  // Fallback to Google Sheets API if GOOGLE_SHEETS_URL is not set
   const sheets = getSheetsClient();
   if (!sheets || !SHEET_ID) return null;
   try {
@@ -1226,16 +1163,8 @@ async function sendWhatsAppOrderDetails(to, session) {
           type: "physical-goods",
           currency: "INR",
           total_amount: { value: totalAmountValue, offset: 100 },
-          payment_type: "payment_gateway:razorpay",
+          payment_type: "payment_gateway:razorpay", // using UPI payment config; if using gateway use "payment_gateway:razorpay" etc.
           payment_configuration: PAYMENT_CONFIGURATION_NAME,
-          // CRITICAL: Send orderId in notes so Razorpay webhook can match it
-          payment_settings: [{
-            type: "razorpay",
-            notes: {
-              orderId: session.orderId,
-              phone: session.phone
-            }
-          }],
           order: {
             status: "pending",
             items,
@@ -1963,60 +1892,59 @@ app.post('/delhivery-webhook', async (req, res) => {
 
 // ---------------- A generic payments webhook endpoint (you must configure your BSP/payment gateway to POST here) ----------------
 app.post('/payments-webhook', async (req, res) => {
-  console.log("🔥 RAZORPAY WEBHOOK HIT");
-  console.log(JSON.stringify(req.body, null, 2));
-
   const body = req.body;
   const event = body.event;
 
-  // CRITICAL FIX: Check for payment.captured specifically
-  if (event !== 'payment.captured') {
-    console.log(`⚠️ Ignoring webhook event: ${event}`);
-    return res.sendStatus(200);
-  }
+  const payment = req.body.payload.payment?.entity;
+  const payment_link = req.body.payload.payment_link?.entity;
+  // console.log("-----payment-------->", payment);
+  // console.log("-----pay_contact------>",payment.contact);
+  
+  
 
-  const payment = req.body.payload?.payment?.entity;
+  // fallback: use order_id directly (not ideal if you rely only on reference_id)
+  const referenceId = payment_link?.reference_id || payment?.reference_id || payment?.notes?.orderId || null;
 
-  if (!payment) {
-    console.error('❌ No payment entity in webhook payload');
-    return res.sendStatus(400);
-  }
-
-  // CRITICAL FIX: Get orderId from payment.notes (Razorpay standard)
-  const referenceId = payment.notes?.orderId;
+  const status = event?.toLowerCase() || '';
 
   if (!referenceId) {
-    console.error('❌ No orderId in payment.notes:', payment.notes);
-    return res.sendStatus(400);
+    console.warn('⚠️ Payments webhook: Could not find reference ID in payload');
   }
 
-  console.log(`💳 Payment captured - Order ID: ${referenceId}, Payment ID: ${payment.id}, Amount: ₹${(payment.amount/100).toFixed(2)}`);
+  console.log(`💳 Payment webhook - Reference ID: ${referenceId}, Status: ${status}`);
 
-  // Find session by orderId
-  let session = orderSessions[referenceId];
-
-  if (!session) {
-    // Fallback: try to find by phone
-    const phone = normalizePhone(payment.contact);
+  let session = null;
+  if (referenceId && orderSessions[referenceId]) {
+    session = orderSessions[referenceId];
+  } else {
+    // fallback: attempt to find session by phone in webhook payload
+    let phone = "";
+    if (payment) {
+      phone = normalizePhone(payment.contact);
+    }
+    if (!phone && payment_link?.customer?.contact) phone = normalizePhone(payment_link.customer.contact);
     if (phone && phoneToOrderIds[phone] && phoneToOrderIds[phone].length) {
       const lastOrderId = phoneToOrderIds[phone][phoneToOrderIds[phone].length - 1];
       session = orderSessions[lastOrderId];
-      console.warn(`⚠️ Session found via phone fallback: ${lastOrderId}`);
+      console.warn("Fallback session found via phone mapping. orderId:", lastOrderId);
     }
   }
-
   if (!session) {
-    console.error(`❌ No session found for order ${referenceId}`);
+    console.warn('payments-webhook: no session for reference id', referenceId);
     return res.sendStatus(200);
   }
 
-  // Payment captured successfully - finalize the order
-  console.log(`✅ Payment successful - Order: ${session.orderId}`);
-  try {
-    await finalizePaidOrder(session, body);
-    console.log(`✅ Order finalized successfully - ${session.orderId}`);
-  } catch (err) {
-    console.error('❌ Error finalizing paid order:', err);
+  if (status.includes('paid')) {
+    console.log(`✅ Payment successful - Order: ${session.orderId}`);
+    try {
+      await finalizePaidOrder(session, body);
+    } catch (err) {
+      console.error('❌ Error finalizing paid order:', err);
+    }
+  } else if (status.includes('failed') || status.includes('cancel') || status.includes('expired')) {
+    session.payment_status = 'failed';
+    console.log(`❌ Payment ${status} - Order: ${session.orderId}`);
+    await sendWhatsAppText(session.phone, "⚠️ Your payment failed or expired. Please try placing the order again.");
   }
 
   res.sendStatus(200);
