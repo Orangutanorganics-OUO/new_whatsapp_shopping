@@ -1114,6 +1114,13 @@ async function sendWhatsAppOrderDetails(to, session) {
       const q = parseInt(product_data[i].quantity, 10) || 1;
       total_wgt += ((getProductWeight[id] || 0) * q);
     }
+
+    // Calculate bulk discount (20% off if weight >= 3000 grams)
+    let discountPaise = 0;
+    if (total_wgt >= 3000) {
+      discountPaise = Math.round(prod_cost * 0.20);
+    }
+
     try {
       const chargesResp = await getDelhiveryCharges({
         origin_pin: DELHIVERY_ORIGIN_PIN,
@@ -1133,19 +1140,46 @@ async function sendWhatsAppOrderDetails(to, session) {
       console.warn('Error retrieving delhivery charges for prepaid', err.message || err);
     }
 
-    // Set shipping charge to zero if order value is greater than 1000 rupees
-    if (prod_cost > 1000 * 100) {
+    // Calculate discounted amount for free shipping check and total
+    const discountedAmount = prod_cost - discountPaise;
+
+    // Set shipping charge to zero if order value (after discount) is greater than 1000 rupees
+    if (discountedAmount > 1000 * 100) {
       shippingChargePaise = 0;
     }
 
     session.shipping_charge = shippingChargePaise;
+    session.discount = discountPaise;
+    session.amount = discountedAmount; // Update session amount with discounted value
 
 
-    const totalAmountValue = prod_cost+shippingChargePaise
+    const totalAmountValue = discountedAmount + shippingChargePaise
   
 
 
 
+
+  // Build order payload with discount if applicable
+  const orderParams = {
+    status: "pending",
+    items,
+    subtotal: { value: prod_cost, offset: 100 },
+    tax: { value: 0, offset: 100 },
+    shipping: { value: Math.round((session.shipping_charge || 0)), offset: 100 }
+  };
+
+  // Add discount field if bulk discount was applied
+  if (discountPaise > 0) {
+    orderParams.discount = {
+      value: discountPaise,
+      offset: 100,
+      description: "Bulk Discount (20% OFF)"
+    };
+  }
+
+  const bodyText = discountPaise > 0
+    ? "🎉 Bulk Discount (20% OFF) applied! Please review your order and complete the payment. NOTE: shipment cost is included"
+    : "Please review your order and complete the payment. NOTE: shipment cost is included";
 
   const payload = {
     messaging_product: "whatsapp",
@@ -1154,7 +1188,7 @@ async function sendWhatsAppOrderDetails(to, session) {
     interactive: {
       type: "order_details",
       header: { type: "text", text: `Order ${session.orderId}` },
-      body: { text: "Please review your order and complete the payment. NOTE: shipment cost is included" },
+      body: { text: bodyText },
       footer: { text: "OrangUtan Organics" },
       action: {
         name: "review_and_pay",
@@ -1165,13 +1199,7 @@ async function sendWhatsAppOrderDetails(to, session) {
           total_amount: { value: totalAmountValue, offset: 100 },
           payment_type: "payment_gateway:razorpay", // using UPI payment config; if using gateway use "payment_gateway:razorpay" etc.
           payment_configuration: PAYMENT_CONFIGURATION_NAME,
-          order: {
-            status: "pending",
-            items,
-            subtotal: { value: prod_cost, offset: 100 },
-            tax: { value: 0, offset: 100 },
-            shipping: { value: Math.round((session.shipping_charge || 0)), offset: 100 }
-          }
+          order: orderParams
         }
       }
     }
@@ -1193,7 +1221,10 @@ async function finalizePaidOrder(session, paymentInfo = {}) {
   const phone = session.phone || '';
   session.payment_status = 'paid';
   try {
-    await sendWhatsAppText(phone, "✅ Payment successful! Your order is confirmed.");
+    const successMsg = session.discount > 0
+      ? "✅ Payment successful! 🎉 Bulk Discount (20% OFF) applied! Your order is confirmed."
+      : "✅ Payment successful! Your order is confirmed.";
+    await sendWhatsAppText(phone, successMsg);
 
     // compute shipping using Delhivery (same logic you used before)
     let shippingChargePaise = 0;
@@ -1206,10 +1237,21 @@ async function finalizePaidOrder(session, paymentInfo = {}) {
       total_wgt += ((getProductWeight[id] || 0) * q);
     }
 
+    // Calculate bulk discount (20% off if weight >= 3000 grams)
+    let discountPaise = 0;
+    if (total_wgt >= 3000) {
+      discountPaise = Math.round(session.amount * 0.20);
+      session.amount = session.amount - discountPaise;
+    }
+    session.discount = discountPaise;
+
     // Build final product description
     let final_product_name = "";
     for (let i = 0; i < product_data.length; i++) {
       final_product_name += (getProductName[product_data[i].product_retailer_id] || 'Item') + "(" + (product_data[i].quantity || 1) + ")" + "\n";
+    }
+    if (discountPaise > 0) {
+      final_product_name += "Bulk Discount (20% OFF): -₹" + (discountPaise / 100).toFixed(2) + "\n";
     }
     final_product_name += "+ shipping charge";
 
@@ -1294,6 +1336,7 @@ async function finalizePaidOrder(session, paymentInfo = {}) {
         subtotal: (session.amount / 100),
         shippingCharge: (session.shipping_charge / 100),
         codCharge: 0,
+        discount: (discountPaise / 100),
         total: ((session.amount + session.shipping_charge) / 100),
         delhiveryResponse: JSON.stringify(delhiveryResp || {})
       });
@@ -1455,10 +1498,21 @@ if (!completedUsers.has(from)) {
             for(let i=0;i<product_data.length;i++){
                 total_wgt+=getProductWeight[product_data[i].product_retailer_id]*product_data[i].quantity
             }
-      
+
+            // Calculate bulk discount (20% off if weight >= 3000 grams)
+            let discountPaise = 0;
+            if (total_wgt >= 3000) {
+              discountPaise = Math.round(session.amount * 0.20);
+              session.amount = session.amount - discountPaise;
+            }
+            session.discount = discountPaise;
+
             let final_product_name = "";
             for(let i=0;i<product_data.length;i++){
-                final_product_name+=getProductName[product_data[i].product_retailer_id]+"("+product_data[i].quantity+")"+"\n";  
+                final_product_name+=getProductName[product_data[i].product_retailer_id]+"("+product_data[i].quantity+")"+"\n";
+            }
+            if (discountPaise > 0) {
+              final_product_name += "Bulk Discount (20% OFF): -₹" + (discountPaise / 100).toFixed(2) + "\n";
             }
             final_product_name+="+ COD charge 150 + shipping charge"
             try {
@@ -1553,6 +1607,7 @@ if (!completedUsers.has(from)) {
                 subtotal: ((session.amount - codChargePaise - session.shipping_charge) / 100),
                 shippingCharge: (session.shipping_charge / 100),
                 codCharge: (codChargePaise / 100),
+                discount: (discountPaise / 100),
                 total: (session.amount / 100),
                 delhiveryResponse: JSON.stringify(delhiveryResp || {})
               });
@@ -1560,7 +1615,10 @@ if (!completedUsers.has(from)) {
               console.error('Failed to send COD order to App Script', err);
             }
       
-            await sendWhatsAppText(from, `✅ Your COD order is placed. Total: ₹${(session.amount/100).toFixed(2)}. We'll notify you when it's shipped.`);
+            const codConfirmMsg = discountPaise > 0
+              ? `✅ Your COD order is placed. 🎉 Bulk Discount (20% OFF) applied! Total: ₹${(session.amount/100).toFixed(2)}. We'll notify you when it's shipped.`
+              : `✅ Your COD order is placed. Total: ₹${(session.amount/100).toFixed(2)}. We'll notify you when it's shipped.`;
+            await sendWhatsAppText(from, codConfirmMsg);
             console.log(`✅ COD order completed - Order: ${session.orderId}`);
             }
             else{
@@ -1586,31 +1644,8 @@ if (!completedUsers.has(from)) {
         // optionally also send a textual confirmation
         await sendWhatsAppText(from, `💳 Please tap *Review and Pay* inside the order card above to complete payment. OrderId: ${session.orderId}`);
 
-        // Send preliminary order to App Script (awaiting payment) - triggers emails
-        try {
-          await sendOrderToAppScript({
-            orderId: session.orderId || '',
-            timestamp: new Date().toISOString(),
-            name: customerData.name || '',
-            email: customerData.email || '',
-            phone: customerData.phone || from,
-            address: `${customerData.address1 || ''} ${customerData.address2 || ''}`.trim(),
-            pincode: customerData.pincode || '',
-            city: customerData.city || '',
-            state: customerData.state || '',
-            productItems: session.productItems || [],
-            paymentMode: 'Prepaid',
-            paymentStatus: 'Awaiting Payment',
-            paymentId: '',
-            subtotal: (session.amount / 100),
-            shippingCharge: 0,
-            codCharge: 0,
-            total: (session.amount / 100),
-            delhiveryResponse: `whatsapp_payment_config:${PAYMENT_CONFIGURATION_NAME}`
-          });
-        } catch (err) {
-          console.error('Failed to send awaiting payment order to App Script', err);
-        }
+        // NOTE: We do NOT send to App Script here (no emails/sheet storage until payment is confirmed)
+        // Data will be sent to App Script only after payment confirmation in finalizePaidOrder()
 
       } catch (err) {
         console.error('Failed to send order_details message', err.response?.data || err.message || err);
