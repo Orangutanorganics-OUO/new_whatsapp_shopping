@@ -67,7 +67,7 @@ const {
   PAYMENTS_LOOKUP_API_KEY
 } = process.env;
 const phoneNumberId = process.env.PHONE_NUMBER_ID;
-const APP_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz7dTbseyukGtC0-Rwzny5001bAGYfxRFsv8oSyEs0B_z9BjdtvMGZsUClks7N82LoBPw/exec"
+const APP_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx4AqUF-uAQfs0D2V0a1TScNE79TyOh7_mhEAnTP7jh4IuuBh7lPjvBIJuAlhzH19EUJg/exec"
 
 
 let pdfText = '';
@@ -1035,6 +1035,7 @@ async function sendOrderToAppScript(orderData) {
       subtotal: parseFloat(orderData.subtotal || 0),
       shippingCharge: parseFloat(orderData.shippingCharge || 0),
       codCharge: parseFloat(orderData.codCharge || 0),
+      discount: parseFloat(orderData.discount || 0),
       total: parseFloat(orderData.total || 0),
       delhiveryResponse: orderData.delhiveryResponse || ''
     };
