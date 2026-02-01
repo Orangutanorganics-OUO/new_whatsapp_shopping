@@ -1082,6 +1082,30 @@ const getProductWeight =
     "324pmzr4c9":1000
   };
 
+// ---------------- Coupon System ----------------
+const COUPONS = {
+  "OUO10": { discount: 0.10, description: "10% OFF" } // 10% discount
+};
+
+function validateCoupon(couponCode) {
+  if (!couponCode || couponCode.trim() === '') {
+    return null;
+  }
+
+  // Case-insensitive lookup
+  const normalizedCode = couponCode.trim().toUpperCase();
+
+  if (COUPONS[normalizedCode]) {
+    return {
+      code: normalizedCode,
+      discount: COUPONS[normalizedCode].discount,
+      description: COUPONS[normalizedCode].description
+    };
+  }
+
+  return null;
+}
+
 // ---------------- NEW: send order_details (WhatsApp native payment) ----------------
 async function sendWhatsAppOrderDetails(to, session) {
   if (!PAYMENT_CONFIGURATION_NAME) {
@@ -1117,10 +1141,23 @@ async function sendWhatsAppOrderDetails(to, session) {
     }
 
     // Calculate bulk discount (20% off if weight >= 3000 grams)
-    let discountPaise = 0;
+    let bulkDiscountPaise = 0;
     if (total_wgt >= 3000) {
-      discountPaise = Math.round(prod_cost * 0.20);
+      bulkDiscountPaise = Math.round(prod_cost * 0.20);
     }
+
+    // Apply coupon discount
+    let couponDiscountPaise = 0;
+    const couponData = validateCoupon(session.customer?.coupon);
+    if (couponData) {
+      // Apply coupon on the product cost (before bulk discount)
+      couponDiscountPaise = Math.round(prod_cost * couponData.discount);
+      session.coupon = couponData.code;
+      session.couponDiscount = couponDiscountPaise;
+    }
+
+    // Total discount combines bulk + coupon
+    const discountPaise = bulkDiscountPaise + couponDiscountPaise;
 
     try {
       const chargesResp = await getDelhiveryCharges({
@@ -1169,18 +1206,34 @@ async function sendWhatsAppOrderDetails(to, session) {
     shipping: { value: Math.round((session.shipping_charge || 0)), offset: 100 }
   };
 
-  // Add discount field if bulk discount was applied
+  // Add discount field if any discount was applied
   if (discountPaise > 0) {
+    let discountDescription = "";
+    if (bulkDiscountPaise > 0 && couponDiscountPaise > 0) {
+      discountDescription = `Bulk Discount (20% OFF) + Coupon ${couponData.code} (${couponData.description})`;
+    } else if (bulkDiscountPaise > 0) {
+      discountDescription = "Bulk Discount (20% OFF)";
+    } else if (couponDiscountPaise > 0) {
+      discountDescription = `Coupon ${couponData.code} (${couponData.description})`;
+    }
+
     orderParams.discount = {
       value: discountPaise,
       offset: 100,
-      description: "Bulk Discount (20% OFF)"
+      description: discountDescription
     };
   }
 
-  const bodyText = discountPaise > 0
-    ? "🎉 Bulk Discount (20% OFF) applied! Please review your order and complete the payment. NOTE: shipment cost is included"
-    : "Please review your order and complete the payment. NOTE: shipment cost is included";
+  let bodyText = "Please review your order and complete the payment. NOTE: shipment cost is included";
+  if (discountPaise > 0) {
+    if (bulkDiscountPaise > 0 && couponDiscountPaise > 0) {
+      bodyText = `🎉 Bulk Discount (20% OFF) + Coupon ${couponData.code} (${couponData.description}) applied! ` + bodyText;
+    } else if (bulkDiscountPaise > 0) {
+      bodyText = "🎉 Bulk Discount (20% OFF) applied! " + bodyText;
+    } else if (couponDiscountPaise > 0) {
+      bodyText = `🎉 Coupon ${couponData.code} (${couponData.description}) applied! ` + bodyText;
+    }
+  }
 
   const payload = {
     messaging_product: "whatsapp",
@@ -1222,9 +1275,11 @@ async function finalizePaidOrder(session, paymentInfo = {}) {
   const phone = session.phone || '';
   session.payment_status = 'paid';
   try {
-    const successMsg = session.discount > 0
-      ? "✅ Payment successful! 🎉 Bulk Discount (20% OFF) applied! Your order is confirmed."
-      : "✅ Payment successful! Your order is confirmed.";
+    let successMsg = "✅ Payment successful!";
+    if (session.discount > 0) {
+      successMsg += " 🎉 Discounts applied!";
+    }
+    successMsg += " Your order is confirmed.";
     await sendWhatsAppText(phone, successMsg);
 
     // compute shipping using Delhivery (same logic you used before)
@@ -1239,20 +1294,36 @@ async function finalizePaidOrder(session, paymentInfo = {}) {
     }
 
     // Calculate bulk discount (20% off if weight >= 3000 grams)
-    let discountPaise = 0;
+    let bulkDiscountPaise = 0;
     if (total_wgt >= 3000) {
-      discountPaise = Math.round(session.amount * 0.20);
-      session.amount = session.amount - discountPaise;
+      bulkDiscountPaise = Math.round(session.amount * 0.20);
+      session.amount = session.amount - bulkDiscountPaise;
     }
-    session.discount = discountPaise;
+
+    // Apply coupon discount (if not already applied)
+    let couponDiscountPaise = session.couponDiscount || 0;
+    if (!couponDiscountPaise && session.customer?.coupon) {
+      const couponData = validateCoupon(session.customer.coupon);
+      if (couponData) {
+        couponDiscountPaise = Math.round(session.amount * couponData.discount);
+        session.amount = session.amount - couponDiscountPaise;
+        session.coupon = couponData.code;
+        session.couponDiscount = couponDiscountPaise;
+      }
+    }
+
+    session.discount = bulkDiscountPaise + couponDiscountPaise;
 
     // Build final product description
     let final_product_name = "";
     for (let i = 0; i < product_data.length; i++) {
       final_product_name += (getProductName[product_data[i].product_retailer_id] || 'Item') + "(" + (product_data[i].quantity || 1) + ")" + "\n";
     }
-    if (discountPaise > 0) {
-      final_product_name += "Bulk Discount (20% OFF): -₹" + (discountPaise / 100).toFixed(2) + "\n";
+    if (bulkDiscountPaise > 0) {
+      final_product_name += "Bulk Discount (20% OFF): -₹" + (bulkDiscountPaise / 100).toFixed(2) + "\n";
+    }
+    if (couponDiscountPaise > 0) {
+      final_product_name += `Coupon ${session.coupon} (10% OFF): -₹` + (couponDiscountPaise / 100).toFixed(2) + "\n";
     }
     final_product_name += "+ shipping charge";
 
@@ -1337,7 +1408,8 @@ async function finalizePaidOrder(session, paymentInfo = {}) {
         subtotal: (session.amount / 100),
         shippingCharge: (session.shipping_charge / 100),
         codCharge: 0,
-        discount: (discountPaise / 100),
+        discount: (session.discount / 100),
+        coupon: session.coupon || '',
         total: ((session.amount + session.shipping_charge) / 100),
         delhiveryResponse: JSON.stringify(delhiveryResp || {})
       });
@@ -1502,18 +1574,35 @@ if (!completedUsers.has(from)) {
 
             // Calculate bulk discount (20% off if weight >= 3000 grams)
             let discountPaise = 0;
+            let bulkDiscountApplied = false;
             if (total_wgt >= 3000) {
               discountPaise = Math.round(session.amount * 0.20);
               session.amount = session.amount - discountPaise;
+              bulkDiscountApplied = true;
             }
-            session.discount = discountPaise;
+
+            // Apply coupon discount
+            let couponDiscountPaise = 0;
+            const couponData = validateCoupon(customerData.coupon);
+            if (couponData) {
+              couponDiscountPaise = Math.round(session.amount * couponData.discount);
+              session.amount = session.amount - couponDiscountPaise;
+              session.coupon = couponData.code;
+              session.couponDiscount = couponDiscountPaise;
+            }
+
+            // Total discount combines bulk + coupon
+            session.discount = discountPaise + couponDiscountPaise;
 
             let final_product_name = "";
             for(let i=0;i<product_data.length;i++){
                 final_product_name+=getProductName[product_data[i].product_retailer_id]+"("+product_data[i].quantity+")"+"\n";
             }
-            if (discountPaise > 0) {
+            if (bulkDiscountApplied && discountPaise > 0) {
               final_product_name += "Bulk Discount (20% OFF): -₹" + (discountPaise / 100).toFixed(2) + "\n";
+            }
+            if (couponData && couponDiscountPaise > 0) {
+              final_product_name += `Coupon ${couponData.code} (${couponData.description}): -₹` + (couponDiscountPaise / 100).toFixed(2) + "\n";
             }
             final_product_name+="+ COD charge 150 + shipping charge"
             try {
@@ -1608,7 +1697,8 @@ if (!completedUsers.has(from)) {
                 subtotal: ((session.amount - codChargePaise - session.shipping_charge) / 100),
                 shippingCharge: (session.shipping_charge / 100),
                 codCharge: (codChargePaise / 100),
-                discount: (discountPaise / 100),
+                discount: (session.discount / 100),
+                coupon: session.coupon || '',
                 total: (session.amount / 100),
                 delhiveryResponse: JSON.stringify(delhiveryResp || {})
               });
@@ -1616,9 +1706,18 @@ if (!completedUsers.has(from)) {
               console.error('Failed to send COD order to App Script', err);
             }
       
-            const codConfirmMsg = discountPaise > 0
-              ? `✅ Your COD order is placed. 🎉 Bulk Discount (20% OFF) applied! Total: ₹${(session.amount/100).toFixed(2)}. We'll notify you when it's shipped.`
-              : `✅ Your COD order is placed. Total: ₹${(session.amount/100).toFixed(2)}. We'll notify you when it's shipped.`;
+            let codConfirmMsg = `✅ Your COD order is placed.`;
+            if (bulkDiscountApplied || couponDiscountPaise > 0) {
+              codConfirmMsg += ` 🎉 Discounts applied!`;
+              if (bulkDiscountApplied) {
+                codConfirmMsg += ` Bulk Discount (20% OFF)`;
+              }
+              if (couponDiscountPaise > 0) {
+                codConfirmMsg += bulkDiscountApplied ? ` + Coupon ${couponData.code} (${couponData.description})` : ` Coupon ${couponData.code} (${couponData.description})`;
+              }
+              codConfirmMsg += `!`;
+            }
+            codConfirmMsg += ` Total: ₹${(session.amount/100).toFixed(2)}. We'll notify you when it's shipped.`;
             await sendWhatsAppText(from, codConfirmMsg);
             console.log(`✅ COD order completed - Order: ${session.orderId}`);
             }
