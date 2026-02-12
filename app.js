@@ -67,7 +67,7 @@ const {
   PAYMENTS_LOOKUP_API_KEY
 } = process.env;
 const phoneNumberId = process.env.PHONE_NUMBER_ID;
-const APP_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx4AqUF-uAQfs0D2V0a1TScNE79TyOh7_mhEAnTP7jh4IuuBh7lPjvBIJuAlhzH19EUJg/exec"
+const APP_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxQ7weoRaky32T-dT3kazdBd-axrzG2lPF4x9W_REmIfjCE9PUYEZbm9hO4M9h3QPdvBg/exec"
 
 
 let pdfText = '';
