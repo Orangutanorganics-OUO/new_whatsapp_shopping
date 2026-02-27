@@ -15,6 +15,39 @@ import bodyParser from 'body-parser';
 import delhiveryRoutes from './delhivery.js';
 import razorpayRoutes from './razorpay.js';
 import checkoutRoutes from './checkout.js';
+
+// ============================================
+// GLOBAL ERROR HANDLERS (Prevent Server Crash)
+// ============================================
+
+// Handle uncaught exceptions (synchronous errors)
+process.on('uncaughtException', (err) => {
+  console.error('❌ UNCAUGHT EXCEPTION! Server is still running...');
+  console.error('Error:', err.name, err.message);
+  console.error('Stack:', err.stack);
+  // Don't exit the process - keep server running
+});
+
+// Handle unhandled promise rejections (async errors)
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ UNHANDLED REJECTION! Server is still running...');
+  console.error('Promise:', promise);
+  console.error('Reason:', reason);
+  // Don't exit the process - keep server running
+});
+
+// Handle SIGTERM gracefully
+process.on('SIGTERM', () => {
+  console.log('👋 SIGTERM received. Shutting down gracefully...');
+  process.exit(0);
+});
+
+// Handle SIGINT gracefully (Ctrl+C)
+process.on('SIGINT', () => {
+  console.log('👋 SIGINT received. Shutting down gracefully...');
+  process.exit(0);
+});
+
 const app = express();
 
 // capture raw body for webhook signature verification if needed
@@ -69,6 +102,18 @@ const {
 const phoneNumberId = process.env.PHONE_NUMBER_ID;
 const APP_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxQ7weoRaky32T-dT3kazdBd-axrzG2lPF4x9W_REmIfjCE9PUYEZbm9hO4M9h3QPdvBg/exec"
 
+// ============================================
+// ENVIRONMENT VARIABLE VALIDATION
+// ============================================
+const requiredEnvVars = ['VERIFY_TOKEN', 'ACCESS_TOKEN', 'PHONE_NUMBER_ID', 'FLOW_ID', 'DELHIVERY_TOKEN'];
+const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingVars.length > 0) {
+  console.error('❌ CRITICAL: Missing required environment variables:');
+  missingVars.forEach(varName => console.error(`   - ${varName}`));
+  console.error('⚠️  Server will continue but some features may not work!');
+}
+
 
 let pdfText = '';
 let intentBasedQA = new Map(); // Store Q&A with intents separately
@@ -76,13 +121,16 @@ let intentBasedQA = new Map(); // Store Q&A with intents separately
 (async () => {
   try {
     pdfText = await extractTextFromPDF('./modified_questions.pdf');
-    console.log('PDF content loaded.');
-    
+    console.log('✅ PDF content loaded successfully.');
+
     // Parse intent-based Q&A from PDF
     parseIntentBasedQA(pdfText);
-    console.log('Intent-based Q&A parsed:', intentBasedQA.size);
+    console.log('✅ Intent-based Q&A parsed:', intentBasedQA.size);
   } catch (err) {
-    console.error('Failed to load PDF:', err);
+    console.error('❌ Failed to load PDF (bot will continue without it):', err.message);
+    // Initialize with empty data so the bot continues to work
+    pdfText = '';
+    intentBasedQA = new Map();
   }
 })();
 
@@ -683,10 +731,20 @@ const resolvedUsers = new Set();
 function normalizePhone(phone) { return (phone || '').replace(/\D/g, ""); }
 
 async function sendWhatsAppText(to, text) {
-  // Validate text is not empty
+  // Validate inputs
+  if (!to) {
+    console.warn(`⚠️ Cannot send message: recipient phone number is missing`);
+    return false;
+  }
+
   if (!text || text.trim() === '') {
     console.warn(`⚠️ Attempted to send empty message to ${to}`);
-    return;
+    return false;
+  }
+
+  if (!ACCESS_TOKEN || !PHONE_NUMBER_ID) {
+    console.error(`❌ Cannot send message: ACCESS_TOKEN or PHONE_NUMBER_ID not configured`);
+    return false;
   }
 
   try {
@@ -695,10 +753,16 @@ async function sendWhatsAppText(to, text) {
       to,
       type: 'text',
       text: { body: text }
-    }, { headers: { Authorization: `Bearer ${ACCESS_TOKEN}` } });
+    }, {
+      headers: { Authorization: `Bearer ${ACCESS_TOKEN}` },
+      timeout: 10000 // 10 second timeout
+    });
     console.log(`✅ Message sent to ${to}`);
+    return true;
   } catch (err) {
     console.error(`❌ Error sending message to ${to}:`, err.response?.data || err.message || err);
+    // Don't throw - just log and return false to prevent server crash
+    return false;
   }
 }
 
@@ -1004,13 +1068,19 @@ async function sendWhatsAppFlow(to, flowId, flowToken = null) {
 // --- App Script Integration ---
 async function sendOrderToAppScript(orderData) {
   if (!APP_SCRIPT_URL) {
-    console.warn('APP_SCRIPT_URL not configured. Skipping order submission to Google Sheets.');
+    console.warn('⚠️ APP_SCRIPT_URL not configured. Skipping order submission to Google Sheets.');
+    return null;
+  }
+
+  // Validate orderData
+  if (!orderData || !orderData.orderId) {
+    console.error('❌ Invalid order data: orderId is required');
     return null;
   }
 
   try {
-    // Format products for App Script
-    const products = orderData.productItems.map(item => ({
+    // Format products for App Script with safety checks
+    const products = (orderData.productItems || []).map(item => ({
       name: getProductName[item.product_retailer_id] || item.name || 'Item',
       size: `${getProductWeight[item.product_retailer_id] || 0}gm`,
       quantity: parseInt(item.quantity, 10) || 1,
@@ -1041,14 +1111,16 @@ async function sendOrderToAppScript(orderData) {
     };
 
     const res = await axios.post(APP_SCRIPT_URL, payload, {
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 30000 // 30 second timeout for Google Sheets
     });
 
     console.log(`✅ Order sent to App Script - Order ID: ${orderData.orderId}`);
     return res.data;
   } catch (err) {
-    console.error('sendOrderToAppScript error:', err.response?.data || err.message || err);
-    throw err;
+    console.error('❌ sendOrderToAppScript error:', err.response?.data || err.message || err);
+    // Don't throw - just log and return null so order processing continues
+    return null;
   }
 }
 
@@ -1422,8 +1494,17 @@ async function finalizePaidOrder(session, paymentInfo = {}) {
   }
 }
 
-// ---------------- Delhivery helpers (unchanged) ----------------
+// ---------------- Delhivery helpers ----------------
 async function getDelhiveryCharges({ origin_pin = DELHIVERY_ORIGIN_PIN, dest_pin, cgm = 5000, pt = 'Pre-paid' }) {
+  // Validate inputs
+  if (!dest_pin) {
+    throw new Error('Destination pincode is required');
+  }
+
+  if (!DELHIVERY_TOKEN) {
+    throw new Error('DELHIVERY_TOKEN not configured');
+  }
+
   try {
     const params = {
       md: 'S',
@@ -1435,16 +1516,34 @@ async function getDelhiveryCharges({ origin_pin = DELHIVERY_ORIGIN_PIN, dest_pin
     };
     const res = await axios.get(DELHIVERY_CHARGES_URL, {
       headers: { Authorization: `Token ${DELHIVERY_TOKEN}`, 'Content-Type': 'application/json' },
-      params
+      params,
+      timeout: 15000 // 15 second timeout
     });
     return res.data;
   } catch (err) {
-    console.error('Delhivery charges error', err.response?.data || err.message || err);
-    throw err;
+    console.error('❌ Delhivery charges error:', err.response?.data || err.message || err);
+    // Don't throw - return null and let caller handle it
+    return null;
   }
 }
 
 async function createDelhiveryShipment({ shipment, pickup_location = { name: "Delhivery Uttarkashi", add: "", city: "", pin: DELHIVERY_ORIGIN_PIN, phone: "" } }) {
+  // Validate inputs
+  if (!shipment) {
+    throw new Error('Shipment data is required');
+  }
+
+  if (!DELHIVERY_TOKEN) {
+    throw new Error('DELHIVERY_TOKEN not configured');
+  }
+
+  // Validate required shipment fields
+  const requiredFields = ['name', 'add', 'pin', 'phone', 'order', 'payment_mode'];
+  const missingFields = requiredFields.filter(field => !shipment[field]);
+  if (missingFields.length > 0) {
+    throw new Error(`Missing required shipment fields: ${missingFields.join(', ')}`);
+  }
+
   try {
     const payload = { shipments: [shipment], pickup_location };
     const bodyStr = `format=json&data=${encodeURIComponent(JSON.stringify(payload))}`;
@@ -1453,12 +1552,14 @@ async function createDelhiveryShipment({ shipment, pickup_location = { name: "De
         Accept: 'application/json',
         Authorization: `Token ${DELHIVERY_TOKEN}`,
         'Content-Type': 'application/x-www-form-urlencoded'
-      }
+      },
+      timeout: 20000 // 20 second timeout
     });
     return res.data;
   } catch (err) {
-    console.error('Delhivery create error', err.response?.data || err.message || err);
-    throw err;
+    console.error('❌ Delhivery create shipment error:', err.response?.data || err.message || err);
+    // Re-throw so caller can handle appropriately
+    throw new Error(`Failed to create Delhivery shipment: ${err.message}`);
   }
 }
 
@@ -1478,15 +1579,23 @@ app.get('/', (req, res) => {
 
 // Incoming WhatsApp messages
 app.post('/', async (req, res) => {
-  const msg = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-  const metadata = req.body.entry?.[0]?.changes?.[0]?.value?.metadata;
-  const phoneIdFromMessage = metadata?.phone_number_id;
-  if (phoneIdFromMessage !== phoneNumberId) {
-    console.log(`Ignoring message sent to different number: ${phoneIdFromMessage}`);
-    return res.sendStatus(200);
-  }
-  
-  if (!msg) return res.sendStatus(200);
+  try {
+    // Validate request body
+    if (!req.body || !req.body.entry) {
+      console.warn('⚠️ Invalid webhook payload received');
+      return res.sendStatus(200);
+    }
+
+    const msg = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+    const metadata = req.body.entry?.[0]?.changes?.[0]?.value?.metadata;
+    const phoneIdFromMessage = metadata?.phone_number_id;
+
+    if (phoneIdFromMessage !== phoneNumberId) {
+      console.log(`Ignoring message sent to different number: ${phoneIdFromMessage}`);
+      return res.sendStatus(200);
+    }
+
+    if (!msg) return res.sendStatus(200);
 
   const fromRaw = msg.from;
   const from = normalizePhone(fromRaw);
@@ -1966,6 +2075,12 @@ Question: "${msgBody}"
   }
 
   res.sendStatus(200);
+  } catch (err) {
+    console.error('❌ CRITICAL: Unhandled error in main webhook handler:', err);
+    console.error('Stack:', err.stack);
+    // Always return 200 to WhatsApp to prevent retries
+    res.sendStatus(200);
+  }
 });
 
 // ---------------- Delhivery Webhook Endpoint ----------------
@@ -2032,8 +2147,15 @@ app.post('/delhivery-webhook', async (req, res) => {
 
 // ---------------- A generic payments webhook endpoint (you must configure your BSP/payment gateway to POST here) ----------------
 app.post('/payments-webhook', async (req, res) => {
-  const body = req.body;
-  const event = body.event;
+  try {
+    // Validate request body
+    if (!req.body) {
+      console.warn('⚠️ Invalid payment webhook payload received');
+      return res.sendStatus(200);
+    }
+
+    const body = req.body;
+    const event = body.event;
 
   const payment = req.body.payload.payment?.entity;
   const payment_link = req.body.payload.payment_link?.entity;
@@ -2088,8 +2210,44 @@ app.post('/payments-webhook', async (req, res) => {
   }
 
   res.sendStatus(200);
+  } catch (err) {
+    console.error('❌ CRITICAL: Unhandled error in payments webhook handler:', err);
+    console.error('Stack:', err.stack);
+    // Always return 200 to prevent retries
+    res.sendStatus(200);
+  }
 });
 
+
+// ============================================
+// ERROR HANDLING MIDDLEWARE
+// ============================================
+
+// 404 handler - Route not found
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'Route not found',
+    path: req.originalUrl
+  });
+});
+
+// Global error handler - catches all errors
+app.use((err, _req, res, _next) => {
+  console.error('❌ Global error handler caught an error:');
+  console.error('Error:', err.name, err.message);
+  console.error('Stack:', err.stack);
+
+  // Don't expose internal errors to client
+  const statusCode = err.statusCode || err.status || 500;
+  const message = err.message || 'Internal server error';
+
+  res.status(statusCode).json({
+    success: false,
+    message: statusCode === 500 ? 'Internal server error' : message,
+    ...(process.env.NODE_ENV === 'development' && { error: err.message, stack: err.stack })
+  });
+});
 
 // ---------------- Start ----------------
 app.listen(PORT, () => console.log(`Bot running on :${PORT}`));
