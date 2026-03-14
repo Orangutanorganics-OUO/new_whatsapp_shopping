@@ -2,19 +2,29 @@
 import 'dotenv/config';
 import express from 'express';
 import axios from 'axios';
+import crypto from 'crypto';
 import ShortUniqueId from 'short-unique-id';
-import { extractTextFromPDF } from './pdf_reader.js'
-import { askGemini } from './gemini.js'
 import cors from 'cors';
 
 import helmet from 'helmet';
 import morgan from 'morgan';
 import bodyParser from 'body-parser';
 
-
 import delhiveryRoutes from './delhivery.js';
 import razorpayRoutes from './razorpay.js';
 import checkoutRoutes from './checkout.js';
+
+// Firebase Realtime Database
+import {
+  isMessageProcessed,
+  markMessageAsProcessed,
+  isPaymentProcessed,
+  markPaymentAsProcessed,
+  acquireOrderLock,
+  saveOrderSession,
+  getOrderSession,
+  cleanupOldData
+} from './firebase.js';
 
 // ============================================
 // GLOBAL ERROR HANDLERS (Prevent Server Crash)
@@ -50,19 +60,118 @@ process.on('SIGINT', () => {
 
 const app = express();
 
+// ============================================
+// RATE LIMITING (In-Memory)
+// ============================================
+const requestCounts = new Map(); // IP => { count, resetTime }
+
+// Simple rate limiter middleware
+const rateLimiter = (maxRequests = 100, windowMs = 60000) => {
+  return (req, res, next) => {
+    const ip = req.ip || req.connection.remoteAddress;
+    const now = Date.now();
+
+    // Get or create request record for this IP
+    let record = requestCounts.get(ip);
+
+    if (!record || now > record.resetTime) {
+      // New window or expired window - reset
+      record = {
+        count: 1,
+        resetTime: now + windowMs
+      };
+      requestCounts.set(ip, record);
+      return next();
+    }
+
+    // Increment count
+    record.count++;
+
+    if (record.count > maxRequests) {
+      console.warn(`⚠️ Rate limit exceeded for IP: ${ip} (${record.count} requests)`);
+      return res.status(429).json({
+        success: false,
+        message: 'Too many requests. Please try again later.',
+        retryAfter: Math.ceil((record.resetTime - now) / 1000) + ' seconds'
+      });
+    }
+
+    next();
+  };
+};
+
+// Cleanup old rate limit records every 10 minutes
+setInterval(() => {
+  const now = Date.now();
+  let cleaned = 0;
+
+  for (const [ip, record] of requestCounts.entries()) {
+    if (now > record.resetTime + 60000) { // Cleanup records 1 minute after expiry
+      requestCounts.delete(ip);
+      cleaned++;
+    }
+  }
+
+  if (cleaned > 0) {
+    console.log(`🧹 Cleaned ${cleaned} expired rate limit records`);
+  }
+}, 10 * 60 * 1000);
+
+// ============================================
+// MIDDLEWARE CONFIGURATION
+// ============================================
+
 // capture raw body for webhook signature verification if needed
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf } }));
-app.use(helmet()); // Security headers
+
+// Security headers
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+    },
+  },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
+  }
+}));
+
 app.use(morgan('combined')); // Logging
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-// CORS Configuration
+
+// CORS Configuration - Allow both production and localhost (for testing)
+const allowedOrigins = [
+  'https://orangutanorganics.com',
+  'https://www.orangutanorganics.com',
+  'http://localhost:3000',
+  'http://localhost:3001'
+];
+
 const corsOptions = {
-  origin: 'https://orangutanorganics.com',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or Postman)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.warn(`⚠️ CORS blocked request from: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
+
+// Apply rate limiting to all routes (100 requests per minute per IP)
+app.use(rateLimiter(100, 60000));
 
 
 app.get('/health', (req, res) => {
@@ -115,24 +224,7 @@ if (missingVars.length > 0) {
 }
 
 
-let pdfText = '';
 let intentBasedQA = new Map(); // Store Q&A with intents separately
-
-(async () => {
-  try {
-    pdfText = await extractTextFromPDF('./modified_questions.pdf');
-    console.log('✅ PDF content loaded successfully.');
-
-    // Parse intent-based Q&A from PDF
-    parseIntentBasedQA(pdfText);
-    console.log('✅ Intent-based Q&A parsed:', intentBasedQA.size);
-  } catch (err) {
-    console.error('❌ Failed to load PDF (bot will continue without it):', err.message);
-    // Initialize with empty data so the bot continues to work
-    pdfText = '';
-    intentBasedQA = new Map();
-  }
-})();
 
 function parseIntentBasedQA() {
   intentBasedQA.clear();
@@ -142,6 +234,9 @@ function parseIntentBasedQA() {
     intents: ['View Products', "Customer Reviews"]
   });
 }
+
+// Initialize intent-based Q&A
+parseIntentBasedQA();
 
 async function sendWhyPeopleLoveUs(to) {
   try {
@@ -724,11 +819,162 @@ const orderSessions = {};        // orderId => session
 const phoneToOrderIds = {};      // phone => [orderId,...]
 const idleTimers = {};
 const remindedUsers = new Set();
-const completedUsers = new Set(); 
-const resolvedUsers = new Set(); 
+// NOTE: processedMessages and processedPayments now stored in Firebase for reliability
+const completedUsers = new Set();
+const resolvedUsers = new Set();
 
-// --- Helpers ---
-function normalizePhone(phone) { return (phone || '').replace(/\D/g, ""); }
+// ============================================
+// MEMORY CLEANUP (Prevent Memory Leaks)
+// ============================================
+
+// Cleanup old sessions, payments, and state (runs every hour)
+setInterval(async () => {
+  const now = Date.now();
+  const sessionExpiryTime = 24 * 60 * 60 * 1000; // 24 hours
+  let cleanupStats = {
+    sessions: 0,
+    timers: 0,
+    phoneMapping: 0
+  };
+
+  // 1. Cleanup Firebase data (messages, payments, locks)
+  try {
+    await cleanupOldData();
+  } catch (err) {
+    console.error('❌ Firebase cleanup failed:', err);
+  }
+
+  // 2. Cleanup old/completed order sessions
+  for (const [orderId, session] of Object.entries(orderSessions)) {
+    const sessionAge = now - (session.createdAt || session.timestamp || 0);
+    const shouldCleanup =
+      (session.finalized && sessionAge > sessionExpiryTime) || // Finalized sessions older than 24h
+      (!session.finalized && sessionAge > 2 * sessionExpiryTime) || // Abandoned sessions older than 48h
+      session.payment_status === 'completed' || // Completed payments
+      session.payment_status === 'failed'; // Failed payments
+
+    if (shouldCleanup) {
+      delete orderSessions[orderId];
+      cleanupStats.sessions++;
+    }
+  }
+
+  // 3. Cleanup idle timers for removed sessions
+  for (const orderId of Object.keys(idleTimers)) {
+    if (!orderSessions[orderId]) {
+      clearTimeout(idleTimers[orderId]);
+      delete idleTimers[orderId];
+      cleanupStats.timers++;
+    }
+  }
+
+  // 4. Cleanup phone-to-order mappings for removed sessions
+  for (const [phone, orderIds] of Object.entries(phoneToOrderIds)) {
+    const validOrderIds = orderIds.filter(orderId => orderSessions[orderId]);
+    if (validOrderIds.length === 0) {
+      delete phoneToOrderIds[phone];
+      cleanupStats.phoneMapping++;
+    } else if (validOrderIds.length < orderIds.length) {
+      phoneToOrderIds[phone] = validOrderIds;
+    }
+  }
+
+  // 5. Cleanup old processed messages (older than 10 minutes)
+  const messageExpiryTime = 10 * 60 * 1000; // 10 minutes
+  for (const [messageId, timestamp] of processedMessages.entries()) {
+    if (now - timestamp > messageExpiryTime) {
+      processedMessages.delete(messageId);
+      cleanupStats.messages = (cleanupStats.messages || 0) + 1;
+    }
+  }
+
+  // Log cleanup stats if anything was cleaned
+  const totalCleaned = Object.values(cleanupStats).reduce((a, b) => a + b, 0);
+  if (totalCleaned > 0) {
+    console.log(`🧹 Cleanup: ${cleanupStats.sessions} sessions, ${cleanupStats.payments} payments, ${cleanupStats.timers} timers, ${cleanupStats.phoneMapping} phone mappings`);
+  }
+}, 60 * 60 * 1000); // Run cleanup every hour
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+/**
+ * Normalize and validate phone number
+ * @param {string} phone - Phone number to normalize
+ * @returns {string} - Normalized phone number (digits only)
+ */
+function normalizePhone(phone) {
+  if (!phone) return '';
+
+  // Remove all non-digit characters
+  const normalized = (phone || '').replace(/\D/g, '');
+
+  // Validate phone number length (10 digits for India)
+  if (normalized.length > 0 && normalized.length !== 10 && normalized.length !== 12) {
+    console.warn(`⚠️ Unusual phone number length: ${normalized.length} digits`);
+  }
+
+  return normalized;
+}
+
+/**
+ * Sanitize user input to prevent XSS and injection attacks
+ * @param {string} input - User input to sanitize
+ * @returns {string} - Sanitized input
+ */
+function sanitizeInput(input) {
+  if (!input || typeof input !== 'string') return '';
+
+  return input
+    .replace(/[<>]/g, '') // Remove HTML tags
+    .replace(/[&]/g, '&amp;') // Escape ampersand
+    .replace(/["']/g, '') // Remove quotes
+    .trim()
+    .slice(0, 1000); // Limit length to prevent DoS
+}
+
+/**
+ * Verify WhatsApp webhook signature
+ * @param {string} payload - Raw request body
+ * @param {string} signature - X-Hub-Signature-256 header value
+ * @returns {boolean} - True if signature is valid
+ */
+function verifyWhatsAppSignature(payload, signature) {
+  if (!signature || !payload) {
+    console.warn('⚠️ Missing signature or payload for webhook verification');
+    return false;
+  }
+
+  // Meta sends signature as "sha256=<hash>"
+  if (!signature.startsWith('sha256=')) {
+    console.warn('⚠️ Invalid signature format');
+    return false;
+  }
+
+  // If APP_SECRET is not configured, skip verification (log warning)
+  if (!process.env.APP_SECRET) {
+    console.warn('⚠️ APP_SECRET not configured. Webhook signature verification is disabled. Add APP_SECRET to .env for production security.');
+    return true; // Allow webhook but log warning
+  }
+
+  try {
+    // Calculate expected signature
+    const expectedSignature = 'sha256=' + crypto
+      .createHmac('sha256', process.env.APP_SECRET)
+      .update(payload)
+      .digest('hex');
+
+    // Use timing-safe comparison to prevent timing attacks
+    return crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expectedSignature)
+    );
+  } catch (error) {
+    console.error('❌ Error verifying webhook signature:', error.message);
+    return false;
+  }
+}
 
 async function sendWhatsAppText(to, text) {
   // Validate inputs
@@ -1489,8 +1735,13 @@ async function finalizePaidOrder(session, paymentInfo = {}) {
       console.error('Failed to send prepaid paid order to App Script', err);
     }
 
+    // Mark order as finalized
+    session.finalized = true;
+
   } catch (err) {
     console.error("Failed finalizePaidOrder:", err);
+    // Mark as finalized even if there was an error
+    session.finalized = true;
   }
 }
 
@@ -1586,6 +1837,15 @@ app.post('/', async (req, res) => {
       return res.sendStatus(200);
     }
 
+    // Verify webhook signature (if APP_SECRET is configured)
+    const signature = req.headers['x-hub-signature-256'];
+    const rawBody = req.rawBody ? req.rawBody.toString() : JSON.stringify(req.body);
+
+    if (signature && !verifyWhatsAppSignature(rawBody, signature)) {
+      console.error('❌ Invalid webhook signature - possible unauthorized request');
+      return res.sendStatus(403);
+    }
+
     const msg = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
     const metadata = req.body.entry?.[0]?.changes?.[0]?.value?.metadata;
     const phoneIdFromMessage = metadata?.phone_number_id;
@@ -1597,24 +1857,59 @@ app.post('/', async (req, res) => {
 
     if (!msg) return res.sendStatus(200);
 
+  // Deduplication check - prevent processing the same message multiple times (FIREBASE)
+  const messageId = msg.id;
+  const messageType = msg.type;
+
+  console.log(`📨 Webhook received - Type: ${messageType}, ID: ${messageId || 'NO_ID'}, From: ${msg.from}`);
+
+  // Check if message already processed (using Firebase for reliability)
+  if (messageId) {
+    const alreadyProcessed = await isMessageProcessed(messageId);
+    if (alreadyProcessed) {
+      console.log(`🔄 Duplicate message detected in Firebase (ID: ${messageId}), skipping processing`);
+      return res.sendStatus(200);
+    }
+  }
+
   const fromRaw = msg.from;
   const from = normalizePhone(fromRaw);
+
+  // Validate phone number
+  if (!from || from.length < 10) {
+    console.warn(`⚠️ Invalid phone number received: ${fromRaw}`);
+    return res.sendStatus(200);
+  }
+
+  // Mark message as processed IMMEDIATELY in Firebase to prevent race conditions
+  if (messageId) {
+    await markMessageAsProcessed(messageId);
+    console.log(`✓ Message marked as processed in Firebase: ${messageId}`);
+  } else {
+    console.warn(`⚠️ Message has no ID - cannot deduplicate! Type: ${messageType}, From: ${from}`);
+  }
+
   if (!phoneToOrderIds[from]) phoneToOrderIds[from] = [];
 
   let session = null;
   let msgBody = "";
   if (msg.type === "text") {
-    msgBody = msg.text?.body?.toLowerCase().trim() || "";
+    // Sanitize user text input
+    const rawText = msg.text?.body || "";
+    msgBody = sanitizeInput(rawText).toLowerCase().trim();
   } else if (msg.type === "interactive") {
     if (msg.interactive.type === "button_reply") {
-      msgBody = msg.interactive.button_reply.title?.toLowerCase().trim() || "";
+      const rawText = msg.interactive.button_reply.title || "";
+      msgBody = sanitizeInput(rawText).toLowerCase().trim();
     } else if (msg.interactive.type === "list_reply") {
-      msgBody = msg.interactive.list_reply.title?.toLowerCase().trim() || "";
+      const rawText = msg.interactive.list_reply.title || "";
+      msgBody = sanitizeInput(rawText).toLowerCase().trim();
     }
   } else if (msg.type === "order") {
     msgBody = "order_received";
   } else if(msg.type === "button") {
-    msgBody = msg.button?.text.toLowerCase().trim() || "";
+    const rawText = msg.button?.text || "";
+    msgBody = sanitizeInput(rawText).toLowerCase().trim();
   }
 
    // ---- Idle timer handling ----
@@ -1650,28 +1945,43 @@ if (!completedUsers.has(from)) {
       return res.sendStatus(200);
     }
 
-    
-    const uid = new ShortUniqueId({ length: 5, dictionary: 'number' });
-    const orderId = `OUO-${uid.randomUUID()}`;
-    session = {
-      orderId,
-      phone: from,
-      customer: customerData,
-      step: 4,
-      productItems: (orderSessions[from]?.productItems) || [],
-      amount: (orderSessions[from]?.amount) || 0
-    };
-    orderSessions[orderId] = session;
-    phoneToOrderIds[from].push(orderId);
+    // ========================================
+    // CRITICAL: Atomic Order Lock (Firebase Transaction)
+    // Prevents duplicate orders from simultaneous webhooks
+    // ========================================
+    const orderResult = await acquireOrderLock(from, async () => {
+      // This callback only runs if we successfully acquired the lock
+      // If another webhook is processing, this won't execute
 
-    console.log(`📦 Order created - ID: ${orderId}, Customer: ${from}`);
-    await sendWhatsAppText(from, `Thanks! We've received your delivery details. (OrderId: ${orderId})`);
+      const uid = new ShortUniqueId({ length: 5, dictionary: 'number' });
+      const orderId = `OUO-${uid.randomUUID()}`;
+      session = {
+        orderId,
+        phone: from,
+        customer: customerData,
+        step: 4,
+        productItems: (orderSessions[from]?.productItems) || [],
+        amount: (orderSessions[from]?.amount) || 0,
+        createdAt: Date.now(), // For memory cleanup
+        timestamp: new Date().toISOString(), // For logging
+        finalized: false,
+        processing: false
+      };
+      orderSessions[orderId] = session;
+      if (!phoneToOrderIds[from]) phoneToOrderIds[from] = [];
+      phoneToOrderIds[from].push(orderId);
 
-    session.amount = session.amount || 0; // paise
-    const paymentMode = (customerData.payment_mode || '').toLowerCase();
-    console.log(`💰 Payment mode selected: ${paymentMode.toUpperCase()} for order ${orderId}`);
+      // Save session to Firebase for persistence
+      await saveOrderSession(orderId, session);
 
-    if (paymentMode === 'cod' || paymentMode === 'cash on delivery' || paymentMode === 'cash-on-delivery') {
+      console.log(`📦 Order created - ID: ${orderId}, Customer: ${from}`);
+      await sendWhatsAppText(from, `Thanks! We've received your delivery details. (OrderId: ${orderId})`);
+
+      session.amount = session.amount || 0; // paise
+      const paymentMode = (customerData.payment_mode || '').toLowerCase();
+      console.log(`💰 Payment mode selected: ${paymentMode.toUpperCase()} for order ${orderId}`);
+
+      if (paymentMode === 'cod' || paymentMode === 'cash on delivery' || paymentMode === 'cash-on-delivery') {
       session.cod_error = true;
             const codChargePaise = 150 * 100;
             let shippingChargePaise = 0;
@@ -1814,7 +2124,10 @@ if (!completedUsers.has(from)) {
             } catch (err) {
               console.error('Failed to send COD order to App Script', err);
             }
-      
+
+            // Mark order as finalized to prevent duplicate processing
+            session.finalized = true;
+
             let codConfirmMsg = `✅ Your COD order is placed.`;
             if (bulkDiscountApplied || couponDiscountPaise > 0) {
               codConfirmMsg += ` 🎉 Discounts applied!`;
@@ -1831,12 +2144,14 @@ if (!completedUsers.has(from)) {
             console.log(`✅ COD order completed - Order: ${session.orderId}`);
             }
             else{
+              // Mark as finalized even if failed
+              session.finalized = true;
               await sendWhatsAppText(from, `✅ Data you enter in flow is incorrect, Make sure you enter vaid data`);
               console.log(`❌ COD order failed - Invalid data for order ${session.orderId}`);
             }
 
-            return res.sendStatus(200);
-    } else {
+            return true; // Success
+      } else {
       session.payment_mode = 'Prepaid';
       console.log(`💳 Prepaid order initiated - Order: ${session.orderId}, Amount: ₹${(session.amount/100).toFixed(2)}`);
 
@@ -1861,8 +2176,17 @@ if (!completedUsers.has(from)) {
         await sendWhatsAppText(from, `⚠️ Could not initiate payment. Please try again later.`);
       }
 
-      return res.sendStatus(200);
+      return true; // Success
+      }
+    }); // End acquireOrderLock callback
+
+    // Check if lock was acquired and order was processed
+    if (!orderResult) {
+      console.log(`⚠️ Duplicate order blocked for ${from} - lock not acquired`);
+      return res.sendStatus(200); // Return success to WhatsApp to prevent retries
     }
+
+    return res.sendStatus(200);
   } // end flow handler
 
   // normal message handlers (unchanged)
@@ -1946,7 +2270,7 @@ else if (/\b\d{14}\b/.test(msgBody)) {
       await sendhowitworks(from);
     
   }
-  else if (/shop & explore/i.test(msgBody) || /back2 shop & explore/i.test(msgBody)) {
+  else if (/explore/i.test(msgBody) || /back2 shop & explore/i.test(msgBody)) {
       await sendshopandexplore(from);
     
   }
@@ -2042,21 +2366,7 @@ else if (/\b\d{14}\b/.test(msgBody)) {
     
     
     else {
-      try {
-      // Create a focused prompt that emphasizes intent-based responses
-      const focusedPrompt = `
-As OrangUtan Organics representative, answer this question warmly and briefly (max 50 words).
-If the question is about traceability, origin, sourcing, or "how it works" - suggest they ask about "Trace Your Products".
-
-Question: "${msgBody}"
-      `;
-      
-      const answer = await askGemini(focusedPrompt, pdfText);
-      replyText = answer || `At OrangUtan Organics, we stand against mislabelling and broken traceability. We empower local small‐holders, guarantee genuine Himalayan origin, and protect seeds via geo‐mapping. Feel free to ask about any of these!`;
-    } catch (err) {
-      console.error('AI response error:', err);
-      replyText = `Oops—something went awry! If you need assistance or want to learn about our farmers, traceability, or seed protection, just let me know.`;
-    }
+      replyText = `At OrangUtan Organics, we stand against mislabelling and broken traceability. We empower local small‐holders, guarantee genuine Himalayan origin, and protect seeds via geo‐mapping. Say "Hi"`;
     }
   } catch (err) {
     console.error("Handler error:", err.response?.data || err);
@@ -2159,13 +2469,26 @@ app.post('/payments-webhook', async (req, res) => {
 
   const payment = req.body.payload.payment?.entity;
   const payment_link = req.body.payload.payment_link?.entity;
-  // console.log("-----payment-------->", payment);
-  // console.log("-----pay_contact------>",payment.contact);
-  
-  
 
-  // fallback: use order_id directly (not ideal if you rely only on reference_id)
+  // Get payment ID for idempotency check
+  const paymentId = payment?.id || payment_link?.id || null;
+
+  // IDEMPOTENCY CHECK: Prevent duplicate processing (FIREBASE)
+  if (paymentId) {
+    const alreadyProcessed = await isPaymentProcessed(paymentId);
+    if (alreadyProcessed) {
+      console.log(`⚠️ Payment webhook already processed in Firebase for payment ID: ${paymentId}. Skipping duplicate.`);
+      return res.sendStatus(200); // Return success to stop Razorpay retries
+    }
+  }
+
+  // Get reference ID (order ID)
   const referenceId = payment_link?.reference_id || payment?.reference_id || payment?.notes?.orderId || null;
+
+  // Log webhook for debugging (only in development or first few times)
+  if (process.env.NODE_ENV === 'development' || !referenceId) {
+    console.log(`🔍 Full payment webhook payload:`, JSON.stringify(body, null, 2));
+  }
 
   const status = event?.toLowerCase() || '';
 
@@ -2173,7 +2496,7 @@ app.post('/payments-webhook', async (req, res) => {
     console.warn('⚠️ Payments webhook: Could not find reference ID in payload');
   }
 
-  console.log(`💳 Payment webhook - Reference ID: ${referenceId}, Status: ${status}`);
+  console.log(`💳 Payment webhook - Reference ID: ${referenceId}, Status: ${status}, Payment ID: ${paymentId}`);
 
   let session = null;
   if (referenceId && orderSessions[referenceId]) {
@@ -2192,21 +2515,52 @@ app.post('/payments-webhook', async (req, res) => {
     }
   }
   if (!session) {
-    console.warn('payments-webhook: no session for reference id', referenceId);
+    console.warn('⚠️ Payments webhook: no session for reference id', referenceId);
     return res.sendStatus(200);
+  }
+
+  // RACE CONDITION PROTECTION: Check if session is already finalized or being processed
+  if (session.finalized || session.payment_status === 'completed' || session.processing) {
+    console.log(`⚠️ Order ${session.orderId} already finalized or processing. Skipping duplicate webhook.`);
+    return res.sendStatus(200); // Return success to stop retries
   }
 
   if (status.includes('paid')) {
     console.log(`✅ Payment successful - Order: ${session.orderId}`);
+
+    // CRITICAL: Mark as processing IMMEDIATELY to prevent race conditions
+    session.processing = true;
+    session.processingStartedAt = Date.now();
+
     try {
       await finalizePaidOrder(session, body);
+
+      // Mark payment as processed to prevent duplicate processing (FIREBASE)
+      if (paymentId) {
+        await markPaymentAsProcessed(paymentId);
+        console.log(`✅ Payment ID ${paymentId} marked as processed in Firebase at ${new Date().toISOString()}`);
+      }
+
+      // Mark session as completed
+      session.payment_status = 'completed';
+      session.finalized = true;
+      session.finalizedAt = Date.now();
+      session.processing = false; // Clear processing flag
     } catch (err) {
       console.error('❌ Error finalizing paid order:', err);
+      session.processing = false; // Clear processing flag even on error
+      session.processingError = err.message;
+      // Don't rethrow - we want to return 200 to prevent retries
     }
   } else if (status.includes('failed') || status.includes('cancel') || status.includes('expired')) {
     session.payment_status = 'failed';
     console.log(`❌ Payment ${status} - Order: ${session.orderId}`);
     await sendWhatsAppText(session.phone, "⚠️ Your payment failed or expired. Please try placing the order again.");
+
+    // Mark payment as processed even for failed payments to prevent retries (FIREBASE)
+    if (paymentId) {
+      await markPaymentAsProcessed(paymentId);
+    }
   }
 
   res.sendStatus(200);
