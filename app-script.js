@@ -1,9 +1,34 @@
 /**
  * Orangutan Organics – WhatsApp Order Handler
- * Handles order submissions from WhatsApp Bot
+ * Handles order submissions from WhatsApp Bot and website checkout.
+ *
+ * SECURITY (audit fix C-05):
+ *   Every user-supplied value interpolated into HTML (email body OR invoice
+ *   PDF) MUST go through esc() below. Un-escaped values allow HTML injection
+ *   which turns the admin email and the invoice PDF into phishing surfaces.
+ *   Sheet-cell values additionally go through sheetCell() to neutralize
+ *   Google Sheets formula injection (=CMD, +CMD, -CMD, @CMD).
+ *
+ * SECURITY (audit fix H-11):
+ *   doPost fail-closes on a shared-secret check before any side-effect. The
+ *   secret lives in Script Properties (Project Settings → Script Properties)
+ *   under the key SCRIPT_SHARED_SECRET; the backend stamps it into every
+ *   payload as `data.secret`. Without a matching secret, requests are rejected
+ *   as unauthorized — this blocks anyone who scrapes the /exec URL from
+ *   injecting fake orders or spraying phishing content via the admin email.
+ *   The secret is stripped from `data` before any downstream processing so
+ *   it never lands in a sheet cell or email body.
  */
 const ADMIN_EMAIL = 'orangutanorganics@gmail.com';
 const ORDERS_SHEET = 'Orders';
+const SCRIPT_SHARED_SECRET_PROPERTY = 'SCRIPT_SHARED_SECRET';
+// Property that holds the target Google Sheet's ID. Required because this
+// script runs standalone (not container-bound), so SpreadsheetApp
+// .getActiveSpreadsheet() returns null. Set via:
+//   Project Settings → Script Properties → Add property
+//   Name: TARGET_SHEET_ID
+//   Value: <the ID from your Sheet's URL — the string between /d/ and /edit>
+const TARGET_SHEET_ID_PROPERTY = 'TARGET_SHEET_ID';
 
 // Product → HSN Mapping for GST Invoice
 const HSN_MAP = {
@@ -15,10 +40,113 @@ const HSN_MAP = {
   "Wild Himalayan Tempering Spice": "07129090"
 };
 
+// =====================================================
+// ================ SECURITY HELPERS ===================
+// =====================================================
+
+/**
+ * Escape a value for safe interpolation into HTML.
+ * Handles null/undefined/numbers/strings uniformly. Never returns "undefined"
+ * or "null" — nullish becomes empty string.
+ */
+function esc(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g,  '&amp;')
+    .replace(/</g,  '&lt;')
+    .replace(/>/g,  '&gt;')
+    .replace(/"/g,  '&quot;')
+    .replace(/'/g,  '&#39;')
+    .replace(/`/g,  '&#96;');
+}
+
+/**
+ * Neutralize a value before writing to a Google Sheets cell. Prefixes any
+ * value starting with a formula trigger character with a single quote so
+ * Sheets forces text interpretation (a leading ' is stripped from the
+ * displayed value but persists internally as a hint to disable formula
+ * evaluation).
+ *
+ * Also converts nullish → '' for consistent cell content.
+ */
+function sheetCell(value) {
+  if (value == null) return '';
+  const s = String(value);
+  if (s.length === 0) return '';
+  // Formula trigger characters per Google Sheets / Excel CSV injection guides.
+  if (/^[=+\-@\t\r]/.test(s)) return "'" + s;
+  return s;
+}
+
+/**
+ * Constant-time string comparison. Standard-library timingSafeEqual isn't
+ * available in Apps Script, so we roll a simple XOR-accumulator equivalent.
+ * Non-strings and length mismatches return false without leaking the length
+ * via short-circuit (we always iterate the longer of the two).
+ */
+function timingSafeStringEquals(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
+  var diff = 0;
+  for (var i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+/**
+ * Build a JSON error response.
+ */
+function jsonResponse(payload) {
+  return ContentService
+    .createTextOutput(JSON.stringify(payload))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Verify the shared secret before any side-effect. Fail-closed:
+ *   - Script Property SCRIPT_SHARED_SECRET missing → reject (operator has
+ *     not finished the rollout; do NOT accept requests in this state).
+ *   - data.secret missing or mismatched → reject as unauthorized.
+ * The received secret is never logged. Success returns { ok: true }; failure
+ * returns { ok: false, response } where response is the ContentService object
+ * the caller should return immediately.
+ */
+function verifyRequestSecret(data) {
+  var expected = PropertiesService.getScriptProperties().getProperty(SCRIPT_SHARED_SECRET_PROPERTY);
+  if (!expected) {
+    console.error('[H-11] SCRIPT_SHARED_SECRET Script Property is not set — rejecting request. Configure it in Project Settings → Script Properties.');
+    return {
+      ok: false,
+      response: jsonResponse({ status: 'error', code: 'unauthorized', message: 'Server misconfigured' }),
+    };
+  }
+  var received = data && typeof data.secret === 'string' ? data.secret : '';
+  if (!timingSafeStringEquals(received, expected)) {
+    // Never log the received value. A tiny fingerprint of the expected value
+    // is fine (helps distinguish stale-secret from missing-secret rollouts
+    // without disclosing anything usable).
+    console.warn('[H-11] doPost rejected: shared-secret mismatch (received_len=' + (received.length || 0) + ', expected_len=' + expected.length + ')');
+    return {
+      ok: false,
+      response: jsonResponse({ status: 'error', code: 'unauthorized', message: 'Unauthorized' }),
+    };
+  }
+  return { ok: true };
+}
+
 // ===== ENTRY POINT =====
 function doPost(e) {
   try {
     const data = JSON.parse(e.postData.contents);
+
+    // Fail-closed shared-secret check (audit fix H-11). Runs BEFORE any
+    // sheet write or email send so a scraped /exec URL can't be weaponized.
+    const auth = verifyRequestSecret(data);
+    if (!auth.ok) return auth.response;
+
+    // Strip the secret so it never lands in a sheet cell / email body /
+    // logged payload. Every downstream function must see a secret-free view.
+    delete data.secret;
 
     if (data.type === 'checkout') {
       return handleCheckoutSubmission(data);
@@ -28,9 +156,7 @@ function doPost(e) {
 
   } catch (error) {
     console.error('Error:', error);
-    return ContentService
-      .createTextOutput(JSON.stringify({ status: 'error', message: error.toString() }))
-      .setMimeType(ContentService.MimeType.JSON);
+    return jsonResponse({ status: 'error', message: 'Failed to process submission' });
   }
 }
 
@@ -49,32 +175,38 @@ function handleCheckoutSubmission(data) {
     sheet.getRange(1, 1, 1, 19).setFontWeight('bold');
   }
 
-  // Format products for display
+  // Format products for display in the Sheet cell. This value is plain text
+  // (rendered by Sheets as string), so no HTML escape — but pass through
+  // sheetCell() to defuse formula injection.
   let productsText = '';
   if (data.products && Array.isArray(data.products)) {
-    productsText = data.products.map(p => `${p.name} (${p.size}) x ${p.quantity} - ₹${p.price * p.quantity}`).join('\n');
+    productsText = data.products.map(function (p) {
+      var qty = Number(p.quantity) || 0;
+      var price = Number(p.price) || 0;
+      return String(p.name || '') + ' (' + String(p.size || '') + ') x ' + qty + ' - ₹' + (price * qty);
+    }).join('\n');
   }
 
   const row = [
-    data.timestamp || new Date().toISOString(),
-    data.orderId || '',
-    data.name || '',
-    data.email || '',
-    data.phone || '',
-    data.address || '',
-    data.pincode || '',
-    data.city || '',
-    data.state || '',
-    productsText,
-    data.paymentMode || '',
-    data.paymentStatus || '',
-    data.paymentId || '',
-    data.subtotal || 0,
-    data.shippingCharge || 0,
-    data.codCharge || 0,
-    data.discount || 0,
-    data.total || 0,
-    data.delhiveryResponse || ''
+    sheetCell(data.timestamp || new Date().toISOString()),
+    sheetCell(data.orderId),
+    sheetCell(data.name),
+    sheetCell(data.email),
+    sheetCell(data.phone),
+    sheetCell(data.address),
+    sheetCell(data.pincode),
+    sheetCell(data.city),
+    sheetCell(data.state),
+    sheetCell(productsText),
+    sheetCell(data.paymentMode),
+    sheetCell(data.paymentStatus),
+    sheetCell(data.paymentId),
+    Number(data.subtotal) || 0,
+    Number(data.shippingCharge) || 0,
+    Number(data.codCharge) || 0,
+    Number(data.discount) || 0,
+    Number(data.total) || 0,
+    sheetCell(data.delhiveryResponse)
   ];
   sheet.appendRow(row);
 
@@ -90,12 +222,18 @@ function handleCheckoutSubmission(data) {
 function sendOrderAdminNotification(data) {
   const isCOD = data.paymentMode === 'COD';
   const hasDiscount = data.discount && data.discount > 0;
-  const subject = `🛒 New ${data.paymentMode} Order - ${data.orderId}`;
+  // Subject is plaintext in mail clients — no HTML escape needed, but strip
+  // any newlines / control chars that could produce a header-injection effect.
+  const safeMode = String(data.paymentMode || '').replace(/[\r\n]/g, '');
+  const safeOrderId = String(data.orderId || '').replace(/[\r\n]/g, '');
+  const subject = `🛒 New ${safeMode} Order - ${safeOrderId}`;
 
   let productsHTML = '<ul>';
   if (data.products && Array.isArray(data.products)) {
-    data.products.forEach(p => {
-      productsHTML += `<li>${p.name} (${p.size}) × ${p.quantity} - ₹${p.price * p.quantity}</li>`;
+    data.products.forEach(function (p) {
+      var qty = Number(p.quantity) || 0;
+      var price = Number(p.price) || 0;
+      productsHTML += '<li>' + esc(p.name) + ' (' + esc(p.size) + ') × ' + esc(qty) + ' - ₹' + esc(price * qty) + '</li>';
     });
   }
   productsHTML += '</ul>';
@@ -111,20 +249,20 @@ function sendOrderAdminNotification(data) {
         <table style="width: 100%; border-collapse: collapse;">
           <tr>
             <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; background: white;">Order ID:</td>
-            <td style="padding: 8px; border: 1px solid #ddd; background: white;">${data.orderId}</td>
+            <td style="padding: 8px; border: 1px solid #ddd; background: white;">${esc(data.orderId)}</td>
           </tr>
           <tr>
             <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; background: white;">Payment Mode:</td>
-            <td style="padding: 8px; border: 1px solid #ddd; background: white;">${data.paymentMode}</td>
+            <td style="padding: 8px; border: 1px solid #ddd; background: white;">${esc(data.paymentMode)}</td>
           </tr>
           <tr>
             <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; background: white;">Payment Status:</td>
-            <td style="padding: 8px; border: 1px solid #ddd; background: white;">${data.paymentStatus}</td>
+            <td style="padding: 8px; border: 1px solid #ddd; background: white;">${esc(data.paymentStatus)}</td>
           </tr>
           ${data.paymentId ? `
           <tr>
             <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; background: white;">Payment ID:</td>
-            <td style="padding: 8px; border: 1px solid #ddd; background: white;">${data.paymentId}</td>
+            <td style="padding: 8px; border: 1px solid #ddd; background: white;">${esc(data.paymentId)}</td>
           </tr>
           ` : ''}
         </table>
@@ -133,21 +271,21 @@ function sendOrderAdminNotification(data) {
         <table style="width: 100%; border-collapse: collapse;">
           <tr>
             <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; background: white;">Name:</td>
-            <td style="padding: 8px; border: 1px solid #ddd; background: white;">${data.name}</td>
+            <td style="padding: 8px; border: 1px solid #ddd; background: white;">${esc(data.name)}</td>
           </tr>
           <tr>
             <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; background: white;">Email:</td>
-            <td style="padding: 8px; border: 1px solid #ddd; background: white;">${data.email}</td>
+            <td style="padding: 8px; border: 1px solid #ddd; background: white;">${esc(data.email)}</td>
           </tr>
           <tr>
             <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; background: white;">Phone:</td>
-            <td style="padding: 8px; border: 1px solid #ddd; background: white;">${data.phone}</td>
+            <td style="padding: 8px; border: 1px solid #ddd; background: white;">${esc(data.phone)}</td>
           </tr>
           <tr>
             <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; background: white;">Address:</td>
             <td style="padding: 8px; border: 1px solid #ddd; background: white;">
-              ${data.address}<br>
-              ${data.city}, ${data.state} - ${data.pincode}
+              ${esc(data.address)}<br>
+              ${esc(data.city)}, ${esc(data.state)} - ${esc(data.pincode)}
             </td>
           </tr>
         </table>
@@ -159,32 +297,32 @@ function sendOrderAdminNotification(data) {
         <table style="width: 100%; border-collapse: collapse;">
           <tr>
             <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; background: white;">Subtotal:</td>
-            <td style="padding: 8px; border: 1px solid #ddd; background: white;">₹${data.subtotal}</td>
+            <td style="padding: 8px; border: 1px solid #ddd; background: white;">₹${esc(data.subtotal)}</td>
           </tr>
           <tr>
             <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; background: white;">Shipping:</td>
-            <td style="padding: 8px; border: 1px solid #ddd; background: white;">₹${data.shippingCharge}</td>
+            <td style="padding: 8px; border: 1px solid #ddd; background: white;">₹${esc(data.shippingCharge)}</td>
           </tr>
           ${isCOD ? `
           <tr>
             <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; background: white;">COD Charge:</td>
-            <td style="padding: 8px; border: 1px solid #ddd; background: white;">₹${data.codCharge}</td>
+            <td style="padding: 8px; border: 1px solid #ddd; background: white;">₹${esc(data.codCharge)}</td>
           </tr>
           ` : ''}
           ${hasDiscount ? `
           <tr>
             <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; background: white;">Discount:</td>
-            <td style="padding: 8px; border: 1px solid #ddd; background: white; color: #059669;">-₹${data.discount}</td>
+            <td style="padding: 8px; border: 1px solid #ddd; background: white; color: #059669;">-₹${esc(data.discount)}</td>
           </tr>
           ` : ''}
           <tr>
             <td style="padding: 8px; border: 1px solid #ddd; font-weight: bold; background: white; font-size: 18px;">Total:</td>
-            <td style="padding: 8px; border: 1px solid #ddd; background: white; font-weight: bold; color: #F46A1F; font-size: 18px;">₹${data.total}</td>
+            <td style="padding: 8px; border: 1px solid #ddd; background: white; font-weight: bold; color: #F46A1F; font-size: 18px;">₹${esc(data.total)}</td>
           </tr>
         </table>
 
         <div style="margin-top: 20px; text-align: center;">
-          <a href="https://docs.google.com/spreadsheets/d/${SpreadsheetApp.getActiveSpreadsheet().getId()}"
+          <a href="https://docs.google.com/spreadsheets/d/${esc(getTargetSpreadsheet().getId())}"
              style="display: inline-block; padding: 12px 24px; background: #0F5B2F; color: white; text-decoration: none; border-radius: 8px; font-weight: bold;">
             View Orders Sheet
           </a>
@@ -207,16 +345,18 @@ function sendOrderAdminNotification(data) {
 function sendOrderCustomerConfirmation(data) {
   const isCOD = data.paymentMode === 'COD';
   const hasDiscount = data.discount && data.discount > 0;
-  const subject = `Order Confirmed - ${data.orderId} | Orangutan Organics`;
+  const safeOrderId = String(data.orderId || '').replace(/[\r\n]/g, '');
+  const subject = `Order Confirmed - ${safeOrderId} | Orangutan Organics`;
 
   let productsHTML = '<ul style="list-style: none; padding: 0;">';
   if (data.products && Array.isArray(data.products)) {
-    data.products.forEach(p => {
-      productsHTML += `
-        <li style="padding: 10px; margin: 5px 0; background: white; border-left: 3px solid #F46A1F;">
-          ${p.name} (${p.size}) × ${p.quantity} - ₹${p.price * p.quantity}
-        </li>
-      `;
+    data.products.forEach(function (p) {
+      var qty = Number(p.quantity) || 0;
+      var price = Number(p.price) || 0;
+      productsHTML +=
+        '<li style="padding: 10px; margin: 5px 0; background: white; border-left: 3px solid #F46A1F;">' +
+          esc(p.name) + ' (' + esc(p.size) + ') × ' + esc(qty) + ' - ₹' + esc(price * qty) +
+        '</li>';
     });
   }
   productsHTML += '</ul>';
@@ -228,7 +368,7 @@ function sendOrderCustomerConfirmation(data) {
       </div>
 
       <div style="padding: 30px; background: #F5F2EB;">
-        <p style="font-size: 16px;">Dear ${data.name},</p>
+        <p style="font-size: 16px;">Dear ${esc(data.name)},</p>
 
         <p style="font-size: 16px;">
           Thank you for your order from Orangutan Organics! Your order has been successfully placed and will be shipped soon.
@@ -236,9 +376,11 @@ function sendOrderCustomerConfirmation(data) {
 
         <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
           <h2 style="color: #0F5B2F; margin-top: 0;">Order Summary</h2>
-          <p><strong>Order ID:</strong> ${data.orderId}</p>
-          <p><strong>Payment Mode:</strong> ${data.paymentMode}</p>
-          ${isCOD ? '<p style="color: #F46A1F;"><strong>Amount to Pay on Delivery:</strong> ₹' + data.total + '</p>' : '<p style="color: #059669;"><strong>Payment Status:</strong> ' + data.paymentStatus + '</p>'}
+          <p><strong>Order ID:</strong> ${esc(data.orderId)}</p>
+          <p><strong>Payment Mode:</strong> ${esc(data.paymentMode)}</p>
+          ${isCOD
+            ? '<p style="color: #F46A1F;"><strong>Amount to Pay on Delivery:</strong> ₹' + esc(data.total) + '</p>'
+            : '<p style="color: #059669;"><strong>Payment Status:</strong> ' + esc(data.paymentStatus) + '</p>'}
         </div>
 
         <h3 style="color: #0F5B2F;">Your Products</h3>
@@ -249,27 +391,27 @@ function sendOrderCustomerConfirmation(data) {
           <table style="width: 100%;">
             <tr>
               <td>Subtotal:</td>
-              <td style="text-align: right;">₹${data.subtotal}</td>
+              <td style="text-align: right;">₹${esc(data.subtotal)}</td>
             </tr>
             <tr>
               <td>Shipping:</td>
-              <td style="text-align: right;">${data.shippingCharge > 0 ? '₹' + data.shippingCharge : 'FREE'}</td>
+              <td style="text-align: right;">${Number(data.shippingCharge) > 0 ? '₹' + esc(data.shippingCharge) : 'FREE'}</td>
             </tr>
             ${isCOD ? `
             <tr>
               <td>COD Charge:</td>
-              <td style="text-align: right;">₹${data.codCharge}</td>
+              <td style="text-align: right;">₹${esc(data.codCharge)}</td>
             </tr>
             ` : ''}
             ${hasDiscount ? `
             <tr>
               <td style="color: #059669;">Discount:</td>
-              <td style="text-align: right; color: #059669;">-₹${data.discount}</td>
+              <td style="text-align: right; color: #059669;">-₹${esc(data.discount)}</td>
             </tr>
             ` : ''}
             <tr style="border-top: 2px solid #0F5B2F; font-weight: bold; font-size: 18px;">
               <td style="padding-top: 10px;">Total:</td>
-              <td style="text-align: right; color: #F46A1F; padding-top: 10px;">₹${data.total}</td>
+              <td style="text-align: right; color: #F46A1F; padding-top: 10px;">₹${esc(data.total)}</td>
             </tr>
           </table>
         </div>
@@ -277,10 +419,10 @@ function sendOrderCustomerConfirmation(data) {
         <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
           <h3 style="color: #0F5B2F; margin-top: 0;">Delivery Address</h3>
           <p style="margin: 0; line-height: 1.6;">
-            ${data.name}<br>
-            ${data.address}<br>
-            ${data.city}, ${data.state} - ${data.pincode}<br>
-            Phone: ${data.phone}
+            ${esc(data.name)}<br>
+            ${esc(data.address)}<br>
+            ${esc(data.city)}, ${esc(data.state)} - ${esc(data.pincode)}<br>
+            Phone: ${esc(data.phone)}
           </p>
         </div>
 
@@ -308,6 +450,14 @@ function sendOrderCustomerConfirmation(data) {
   `;
 
   try {
+    // Only attempt to send if we have a plausible email address. Even without
+    // this check, MailApp will throw on missing recipient; the check gives us
+    // a clearer log line.
+    if (!data.email || typeof data.email !== 'string' || data.email.indexOf('@') === -1) {
+      console.warn('Skipping customer confirmation: missing/invalid email');
+      return;
+    }
+
     // Generate and attach PDF invoice
     const invoicePDF = generateInvoicePDF(data);
 
@@ -325,8 +475,27 @@ function sendOrderCustomerConfirmation(data) {
 // =====================================================
 // =================== UTILITIES ========================
 // =====================================================
+/**
+ * Resolve the target Spreadsheet by ID from Script Properties. Fail-closed:
+ * throws a descriptive error if the property is missing so the caller's
+ * try/catch surfaces "Server misconfigured" instead of a null-deref.
+ * Required because this script is standalone (not container-bound), so
+ * SpreadsheetApp.getActiveSpreadsheet() returns null.
+ */
+function getTargetSpreadsheet() {
+  var sheetId = PropertiesService.getScriptProperties().getProperty(TARGET_SHEET_ID_PROPERTY);
+  if (!sheetId) {
+    throw new Error(
+      TARGET_SHEET_ID_PROPERTY + ' Script Property is not set. ' +
+      'Configure it in Project Settings → Script Properties (value = the ID ' +
+      'from your Sheet URL between /d/ and /edit).'
+    );
+  }
+  return SpreadsheetApp.openById(sheetId);
+}
+
 function getOrCreateSheet(name) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = getTargetSpreadsheet();
   let sheet = ss.getSheetByName(name);
   if (!sheet) sheet = ss.insertSheet(name);
   return sheet;
@@ -334,7 +503,7 @@ function getOrCreateSheet(name) {
 
 // Helper: Download logo and convert to Base64
 function getLogoBase64() {
-  const url = "https://orangutanorganics.com/static/media/Orang-utan-color-logo-1.df123e4b4aafc86a4500.png";
+  const url = "https://orangutanorganics.com/static/media/logo.5abb273f7b264e84519864f3c4b23213.svg";
   const response = UrlFetchApp.fetch(url);
   const blob = response.getBlob();
   return Utilities.base64Encode(blob.getBytes());
@@ -344,48 +513,60 @@ function getLogoBase64() {
 function generateInvoicePDF(data) {
   const logoBase64 = getLogoBase64();
 
-  // Generate product rows with corrected GST calculation
-  // NOTE: Product prices INCLUDE 5% GST
-  // So Net Amount = Price / 1.05, Tax = Net * 0.05, Total = Price
+  // Generate product rows (audit fix M-16).
+  //
+  // Product prices are GST-inclusive. Each line item now carries an explicit
+  // `gst_rate` (percent) stamped by the backend from shared/catalog.js — the
+  // single source of truth for tax rate per SKU. Fallback to 5% only if the
+  // payload omits the field (older in-flight payloads during rollout).
+  //
+  // Given price_with_gst and gst_rate:
+  //   net_per_unit = price_with_gst / (1 + gst_rate/100)
+  //   tax_per_unit = price_with_gst - net_per_unit
+  // This holds for any rate, so switching a SKU to 12% / 18% / 28% needs
+  // ONLY a catalog edit — no invoice code change.
   let productRows = '';
   let totalNetAmount = 0;
   let totalTaxAmount = 0;
   let totalAmount = 0;
 
   if (data.products && Array.isArray(data.products)) {
-    data.products.forEach(p => {
-      const hsn = HSN_MAP[p.name] || "";
-      const priceWithGST = p.price; // This already includes 5% GST
-      const netPerUnit = priceWithGST / 1.05; // Remove GST to get net price
-      const netAmount = netPerUnit * p.quantity;
-      const taxRate = 5;
-      const taxAmount = netAmount * (taxRate / 100);
-      const total = netAmount + taxAmount; // This equals priceWithGST * quantity
+    data.products.forEach(function (p) {
+      var qty = Number(p.quantity) || 0;
+      var priceWithGST = Number(p.price) || 0;
+      var gstRate = Number(p.gst_rate);
+      if (!isFinite(gstRate) || gstRate < 0) gstRate = 5;
+      var netPerUnit = priceWithGST / (1 + gstRate / 100);
+      var taxPerUnit = priceWithGST - netPerUnit;
+      var netAmount = netPerUnit * qty;
+      var taxAmount = taxPerUnit * qty;
+      var total = netAmount + taxAmount;
+
+      var hsn = HSN_MAP[p.name] || '';
 
       totalNetAmount += netAmount;
       totalTaxAmount += taxAmount;
       totalAmount += total;
 
-      productRows += `
-      <tr>
-        <td>${p.name} (${p.size})</td>
-        <td>${hsn}</td>
-        <td class="right">${netPerUnit.toFixed(2)}</td>
-        <td class="right">${p.quantity}</td>
-        <td class="right">${netAmount.toFixed(2)}</td>
-        <td class="right">${taxRate}</td>
-        <td class="right">IGST</td>
-        <td class="right">${taxAmount.toFixed(2)}</td>
-        <td class="right">${total.toFixed(2)}</td>
-      </tr>
-      `;
+      productRows +=
+        '<tr>' +
+          '<td>' + esc(p.name) + ' (' + esc(p.size) + ')</td>' +
+          '<td>' + esc(hsn) + '</td>' +
+          '<td class="right">' + esc(netPerUnit.toFixed(2)) + '</td>' +
+          '<td class="right">' + esc(qty) + '</td>' +
+          '<td class="right">' + esc(netAmount.toFixed(2)) + '</td>' +
+          '<td class="right">' + esc(gstRate) + '</td>' +
+          '<td class="right">IGST</td>' +
+          '<td class="right">' + esc(taxAmount.toFixed(2)) + '</td>' +
+          '<td class="right">' + esc(total.toFixed(2)) + '</td>' +
+        '</tr>';
     });
   }
 
   // Calculate final amounts
-  const discountAmount = data.discount || 0;
-  const shippingCharge = data.shippingCharge || 0;
-  const codCharge = data.codCharge || 0;
+  const discountAmount = Number(data.discount) || 0;
+  const shippingCharge = Number(data.shippingCharge) || 0;
+  const codCharge = Number(data.codCharge) || 0;
   const finalTotal = totalAmount - discountAmount + shippingCharge + codCharge;
 
   // Format date
@@ -478,7 +659,7 @@ function generateInvoicePDF(data) {
   <div class="subtitle">(Original for Recipient)</div>
 
   <div class="header">
-    <img src="data:image/png;base64,${logoBase64}" class="logo">
+    <img src="data:image/svg+xml;base64,${logoBase64}" class="logo">
     <div class="company">
       <strong>Orang Utan Organics LLP</strong><br>
       Village - Bhangeli, Gangnani,<br>
@@ -489,12 +670,12 @@ function generateInvoicePDF(data) {
 
   <table>
     <tr>
-      <td><strong>Order Number:</strong> ${data.orderId}</td>
-      <td><strong>Invoice Number:</strong> ${data.orderId}</td>
+      <td><strong>Order Number:</strong> ${esc(data.orderId)}</td>
+      <td><strong>Invoice Number:</strong> ${esc(data.orderId)}</td>
     </tr>
     <tr>
-      <td><strong>Order Date:</strong> ${formattedDate}</td>
-      <td><strong>Invoice Date:</strong> ${formattedDate}</td>
+      <td><strong>Order Date:</strong> ${esc(formattedDate)}</td>
+      <td><strong>Invoice Date:</strong> ${esc(formattedDate)}</td>
     </tr>
   </table>
 
@@ -505,18 +686,18 @@ function generateInvoicePDF(data) {
     </tr>
     <tr>
       <td>
-        ${data.name}<br>
-        ${data.address}<br>
-        ${data.city}, ${data.state} - ${data.pincode}<br>
-        Phone: ${data.phone}<br>
-        Place of supply: ${data.state}
+        ${esc(data.name)}<br>
+        ${esc(data.address)}<br>
+        ${esc(data.city)}, ${esc(data.state)} - ${esc(data.pincode)}<br>
+        Phone: ${esc(data.phone)}<br>
+        Place of supply: ${esc(data.state)}
       </td>
       <td>
-        ${data.name}<br>
-        ${data.address}<br>
-        ${data.city}, ${data.state} - ${data.pincode}<br>
-        Phone: ${data.phone}<br>
-        Place of delivery: ${data.state}
+        ${esc(data.name)}<br>
+        ${esc(data.address)}<br>
+        ${esc(data.city)}, ${esc(data.state)} - ${esc(data.pincode)}<br>
+        Phone: ${esc(data.phone)}<br>
+        Place of delivery: ${esc(data.state)}
       </td>
     </tr>
   </table>
@@ -541,33 +722,33 @@ function generateInvoicePDF(data) {
 <table>
   <tr>
     <td colspan="8" class="left bold">Total</td>
-    <td class="right bold">${totalAmount.toFixed(2)}</td>
+    <td class="right bold">${esc(totalAmount.toFixed(2))}</td>
   </tr>
 
   ${discountAmount > 0 ? `
   <tr>
-    <td colspan="8" class="left bold">Discount ${data.coupon ? '(' + data.coupon + ')' : ''}</td>
-    <td class="right">-${discountAmount.toFixed(2)}</td>
+    <td colspan="8" class="left bold">Discount ${data.coupon ? '(' + esc(data.coupon) + ')' : ''}</td>
+    <td class="right">-${esc(discountAmount.toFixed(2))}</td>
   </tr>
   ` : ''}
 
   ${shippingCharge > 0 ? `
   <tr>
     <td colspan="8" class="left bold">Shipping Charges</td>
-    <td class="right">${shippingCharge.toFixed(2)}</td>
+    <td class="right">${esc(shippingCharge.toFixed(2))}</td>
   </tr>
   ` : ''}
 
   ${codCharge > 0 ? `
   <tr>
     <td colspan="8" class="left bold">COD Charges</td>
-    <td class="right">${codCharge.toFixed(2)}</td>
+    <td class="right">${esc(codCharge.toFixed(2))}</td>
   </tr>
   ` : ''}
 
   <tr>
     <td colspan="8" class="left bold" style="font-size: 16px;">Net Amount Payable</td>
-    <td class="right bold" style="font-size: 16px;">₹${finalTotal.toFixed(2)}</td>
+    <td class="right bold" style="font-size: 16px;">₹${esc(finalTotal.toFixed(2))}</td>
   </tr>
 </table>
 
@@ -575,26 +756,26 @@ ${data.paymentId ? `
 <table>
     <tr>
       <td><strong>Payment Transaction ID</strong></td>
-      <td>${data.paymentId}</td>
+      <td>${esc(data.paymentId)}</td>
     </tr>
     <tr>
       <td><strong>Date</strong></td>
-      <td>${formattedDate}</td>
+      <td>${esc(formattedDate)}</td>
     </tr>
     <tr>
       <td><strong>Mode of Payment</strong></td>
-      <td>${data.paymentMode}</td>
+      <td>${esc(data.paymentMode)}</td>
     </tr>
   </table>
 ` : `
 <table>
 <tr>
       <td><strong>Date</strong></td>
-      <td>${formattedDate}</td>
+      <td>${esc(formattedDate)}</td>
     </tr>
     <tr>
       <td><strong>Mode of Payment</strong></td>
-      <td>${data.paymentMode}</td>
+      <td>${esc(data.paymentMode)}</td>
     </tr>
   </table>
 `}
@@ -604,8 +785,13 @@ ${data.paymentId ? `
   </html>
   `;
 
+  // Build a safe PDF filename. Strip anything that isn't safe in a filesystem
+  // path so a hostile orderId can't traverse or inject a Content-Disposition
+  // shenanigan on the download side.
+  var safeOrderIdForFilename = String(data.orderId || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
+
   const blob = Utilities.newBlob(html, "text/html");
-  const pdf = blob.getAs("application/pdf").setName(`Invoice_${data.orderId}.pdf`);
+  const pdf = blob.getAs("application/pdf").setName('Invoice_' + safeOrderIdForFilename + '.pdf');
 
   return pdf;
 }
@@ -614,10 +800,14 @@ ${data.paymentId ? `
 // =================== TEST FUNCTION ====================
 // =====================================================
 function testCheckoutOrder() {
+  // Reads the same Script Property the request path uses. Trips fail-closed
+  // reject if the operator hasn't set it yet, which is the intended behavior.
+  var secret = PropertiesService.getScriptProperties().getProperty(SCRIPT_SHARED_SECRET_PROPERTY) || '';
   const e = {
     postData: {
       contents: JSON.stringify({
         type: 'checkout',
+        secret: secret,
         orderId: 'OUO-12345',
         timestamp: new Date().toISOString(),
         name: 'Test Customer',

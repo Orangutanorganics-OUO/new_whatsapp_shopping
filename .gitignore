@@ -7,6 +7,9 @@
 .env.example
 *.env
 
+test.txt
+fb_sdk.json
+
 # Credentials and secrets
 cred.json
 credentials.json
