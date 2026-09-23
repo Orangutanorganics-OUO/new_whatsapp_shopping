@@ -33,17 +33,18 @@ import crypto from 'crypto';
 // authoritative) BEFORE promoting PRICING_ENFORCEMENT_MODE to `strict`.
 // Once verified, flip `verified: true`.
 export const PRODUCTS = Object.freeze({
-  '43mypu8dye': { name: 'Himalayan Badri Cow Ghee', size: '120gm',  weight_g: 120,  price_paise: 45000,     verified: true, gst_rate: 5 },
-  'l722c63kq9': { name: 'Himalayan Badri Cow Ghee', size: '295gm',  weight_g: 295,  price_paise: 106700, verified: true, gst_rate: 5 },
-  'kkii6r9uvh': { name: 'Himalayan Badri Cow Ghee', size: '495gm',  weight_g: 495,  price_paise: 179500,     verified: true, gst_rate: 5 },
+  '43mypu8dye': { name: 'Himalayan Badri Cow Ghee', size: '100gm',  weight_g: 100,  price_paise: 45000,     verified: true, gst_rate: 5 },
+  // 'l722c63kq9': { name: 'Himalayan Badri Cow Ghee', size: '295gm',  weight_g: 295,  price_paise: 106700, verified: true, gst_rate: 5 },
+  // 'kkii6r9uvh': { name: 'Himalayan Badri Cow Ghee', size: '495gm',  weight_g: 495,  price_paise: 179500,     verified: true, gst_rate: 5 },
   'm519x5gv9s': { name: 'Himalayan White Rajma',    size: '500gm',  weight_g: 500,  price_paise: 34700, verified: true, gst_rate: 5 },
-  '294l11gpcm': { name: 'Himalayan White Rajma',    size: '1kg',    weight_g: 1000, price_paise: 69100, verified: true, gst_rate: 5 },
+  // '294l11gpcm': { name: 'Himalayan White Rajma',    size: '1kg',    weight_g: 1000, price_paise: 69100, verified: true, gst_rate: 5 },
   'ezg1lu6edm': { name: 'Himalayan Red Rajma',      size: '500gm',  weight_g: 500,  price_paise: 34700, verified: true, gst_rate: 5 },
-  'tzz72lpzz2': { name: 'Himalayan Red Rajma',      size: '1kg',    weight_g: 1000, price_paise: 69100, verified: true, gst_rate: 5 },
-  'esltl7pftq': { name: 'Wild Himalayan Tempering Spice', size: '100gm', weight_g: 100, price_paise: 34700, verified: true, gst_rate: 5 },
+  // 'tzz72lpzz2': { name: 'Himalayan Red Rajma',      size: '1kg',    weight_g: 1000, price_paise: 69100, verified: true, gst_rate: 5 },
+  'esltl7pftq': { name: 'Wild Himalayan Tempering Spice', size: '17gm', weight_g: 17, price_paise: 34700, verified: true, gst_rate: 5 },
   'obdqyehm1w': { name: 'Himalayan Red Rice',       size: '1kg',    weight_g: 1000, price_paise: 34700, verified: true, gst_rate: 5 },
   '5diu7mcmbf': { name: 'Himalayan Black Soyabean', size: '500gm',  weight_g: 500,  price_paise: 34700, verified: true, gst_rate: 5 },
-  '324pmzr4c9': { name: 'Himalayan Black Soyabean', size: '1kg',    weight_g: 1000, price_paise: 69100, verified: true, gst_rate: 5 },
+  // '324pmzr4c9': { name: 'Himalayan Black Soyabean', size: '1kg',    weight_g: 1000, price_paise: 69100, verified: true, gst_rate: 5 },
+  '1aqtowlak1': { name: 'Himalayan Forest Honey', size: '300g',    weight_g: 300, price_paise: 55000, verified: true, gst_rate: 5 },
 });
 
 // ============================================================================

@@ -1784,16 +1784,17 @@ async function sendWhatsAppCatalog(to) {
                 title: "Our Products",
                 product_items: [
                   { product_retailer_id: "43mypu8dye" },
-                  { product_retailer_id: "l722c63kq9" },
-                  { product_retailer_id: "kkii6r9uvh" },
+                  // { product_retailer_id: "l722c63kq9" },
+                  // { product_retailer_id: "kkii6r9uvh" },
                   { product_retailer_id: "m519x5gv9s" },
-                  { product_retailer_id: "294l11gpcm" },
+                  // { product_retailer_id: "294l11gpcm" },
                   { product_retailer_id: "ezg1lu6edm" },
-                  { product_retailer_id: "tzz72lpzz2" },
+                  // { product_retailer_id: "tzz72lpzz2" },
                   { product_retailer_id: "esltl7pftq" },
                   { product_retailer_id: "obdqyehm1w" },
-                  { product_retailer_id: "5diu7mcmbf" },
-                  { product_retailer_id: "324pmzr4c9" }
+                  // { product_retailer_id: "5diu7mcmbf" },
+                  { product_retailer_id: "324pmzr4c9" },
+                  { product_retailer_id: "1aqtowlak1" }
                 ]
               }
             ]
@@ -1969,32 +1970,34 @@ async function sendOrderToAppScript(orderData) {
 
 // product metadata (as you had)
 const getProductName =
-  { "43mypu8dye":"Himalayan badri cow ghee 120gm" ,
-    "l722c63kq9":"Himalayan badri cow ghee 295gm" ,
-    "kkii6r9uvh":"Himalayan badri cow ghee 495gm" ,
+  { "43mypu8dye":"Himalayan badri cow ghee 100gm" ,
+    // "l722c63kq9":"Himalayan badri cow ghee 295gm" ,
+    // "kkii6r9uvh":"Himalayan badri cow ghee 495gm" ,
     "m519x5gv9s":"Himalayan White Rajma 500gm" ,
-    "294l11gpcm":"Himalayan White Rajma 1kg" ,
+    // "294l11gpcm":"Himalayan White Rajma 1kg" ,
     "ezg1lu6edm":"Himalayan Red Rajma 500gm" ,
-    "tzz72lpzz2":"Himalayan Red Rajma 1kg" ,
+    // "tzz72lpzz2":"Himalayan Red Rajma 1kg" ,
     "esltl7pftq":"Wild Himalayan Tempering Spice" ,
     "obdqyehm1w":"Himalayan Red Rice",
     "5diu7mcmbf":"Himalayan Black Soyabean 500gm",
-    "324pmzr4c9":"Himalayan Black Soyabean 1kg"
+    // "324pmzr4c9":"Himalayan Black Soyabean 1kg",
+    "1aqtowlak1":"Himalayan Forest Honey 300gm"
   
   };
 
 const getProductWeight =
-  { "43mypu8dye":120 ,
-    "l722c63kq9":295 ,
-    "kkii6r9uvh":495 ,
+  { "43mypu8dye":100 ,
+    // "l722c63kq9":295 ,
+    // "kkii6r9uvh":495 ,
     "m519x5gv9s":500 ,
-    "294l11gpcm":1000 ,
+    // "294l11gpcm":1000 ,
     "ezg1lu6edm":500 ,
-    "tzz72lpzz2":1000 ,
+    // "tzz72lpzz2":1000 ,
     "esltl7pftq":100 ,
     "obdqyehm1w":1000,
     "5diu7mcmbf":500,
-    "324pmzr4c9":1000
+    // "324pmzr4c9":1000,
+    "1aqtowlak1":300
   };
 
 // ---------------- Coupon System (audit fix M-15) ----------------
